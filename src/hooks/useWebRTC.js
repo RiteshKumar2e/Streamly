@@ -46,6 +46,28 @@ function getIceServers() {
   return servers;
 }
 
+// ICE candidates come in bursts; batch them so each side makes ~2-3 relay
+// requests instead of one per candidate (ntfy.sh rate-limits per IP)
+function createIceBatcher(sendBatch, delayMs = 400) {
+  let queue = [];
+  let timer = null;
+  return (candidate) => {
+    queue.push(candidate);
+    if (timer) return;
+    timer = setTimeout(() => {
+      const batch = queue;
+      queue = [];
+      timer = null;
+      sendBatch(batch);
+    }, delayMs);
+  };
+}
+
+function candidatesOf(msg) {
+  if (Array.isArray(msg.candidates)) return msg.candidates;
+  return msg.candidate ? [msg.candidate] : [];
+}
+
 function randomId(prefix, length) {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   let id = prefix;
@@ -244,10 +266,11 @@ export default function useWebRTC(mode) {
         setupChannel(e.channel);
       };
 
+      const queueIce = createIceBatcher((candidates) => {
+        if (pcRef.current === pc) signal.send({ type: 'ice', to: attemptId, candidates });
+      });
       pc.onicecandidate = (e) => {
-        if (e.candidate && pcRef.current === pc) {
-          signal.send({ type: 'ice', to: attemptId, candidate: e.candidate.toJSON() });
-        }
+        if (e.candidate && pcRef.current === pc) queueIce(e.candidate.toJSON());
       };
 
       pc.onconnectionstatechange = () => {
@@ -279,13 +302,15 @@ export default function useWebRTC(mode) {
       if (!msg.from) return;
       if (msg.type === 'offer' && msg.sdp) {
         answerOffer(msg, signal);
-      } else if (msg.type === 'ice' && msg.candidate) {
+      } else if (msg.type === 'ice') {
         const pc = pcRef.current;
-        if (pc && attemptRef.current === msg.from && pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
-        } else {
-          // ICE can arrive before its offer — keep it until the offer shows up
-          pendingCandidates.current.push({ attemptId: msg.from, candidate: msg.candidate });
+        for (const candidate of candidatesOf(msg)) {
+          if (pc && attemptRef.current === msg.from && pc.remoteDescription) {
+            pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+          } else {
+            // ICE can arrive before its offer — keep it until the offer shows up
+            pendingCandidates.current.push({ attemptId: msg.from, candidate });
+          }
         }
       }
     };
@@ -328,11 +353,13 @@ export default function useWebRTC(mode) {
         } catch (err) {
           console.error('Phone failed to apply answer:', err);
         }
-      } else if (msg.type === 'ice' && msg.candidate) {
-        if (pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
-        } else {
-          pendingCandidates.current.push({ attemptId, candidate: msg.candidate });
+      } else if (msg.type === 'ice') {
+        for (const candidate of candidatesOf(msg)) {
+          if (pc.remoteDescription) {
+            pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+          } else {
+            pendingCandidates.current.push({ attemptId, candidate });
+          }
         }
       }
     };
@@ -344,7 +371,6 @@ export default function useWebRTC(mode) {
       // Subscribe before sending the offer, so the laptop's answer can't be missed
       await signal.ready;
       if (!isCurrent()) return;
-      signal.setBackupPolling(true);
 
       const pc = new RTCPeerConnection({ iceServers: getIceServers() });
       pcRef.current = pc;
@@ -358,10 +384,11 @@ export default function useWebRTC(mode) {
         }
       });
 
+      const queueIce = createIceBatcher((candidates) => {
+        if (pcRef.current === pc) signal.send({ type: 'ice', from: attemptId, candidates });
+      });
       pc.onicecandidate = (e) => {
-        if (e.candidate && pcRef.current === pc) {
-          signal.send({ type: 'ice', from: attemptId, candidate: e.candidate.toJSON() });
-        }
+        if (e.candidate && pcRef.current === pc) queueIce(e.candidate.toJSON());
       };
 
       pc.onconnectionstatechange = () => {

@@ -17,8 +17,8 @@
  */
 
 const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64KB — safe for most WebRTC implementations
-const MAX_BUFFERED_AMOUNT = 1024 * 1024; // 1MB — pause sending when buffer exceeds this
-const BACKPRESSURE_RESUME = 256 * 1024; // 256KB — resume sending when buffer drops below
+const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // 8MB — pause sending when buffer exceeds this
+const BACKPRESSURE_RESUME = 1024 * 1024; // 1MB — resume sending when buffer drops below
 const MAX_VIDEO_SIZE = 8 * 1024 ** 3;
 
 /**
@@ -61,76 +61,69 @@ export function sendFile(file, channel, callbacks = {}) {
     return { cancel: () => {} };
   }
 
-  const reader = new FileReader();
   let chunkIndex = 0;
+  let lastPercent = -1;
 
-  function readNextChunk() {
-    if (cancelled) return;
+  // Resolves once the send buffer has drained enough to keep going
+  const waitForDrain = () => new Promise((resolve, reject) => {
+    const done = () => {
+      targetChannel.removeEventListener('bufferedamountlow', onLow);
+      targetChannel.removeEventListener('close', onClose);
+      clearInterval(fallback);
+    };
+    const onLow = () => { done(); resolve(); };
+    const onClose = () => { done(); reject(new Error('Connection to laptop was lost')); };
+    // Safety net in case a browser never fires bufferedamountlow
+    const fallback = setInterval(() => {
+      if (targetChannel.readyState !== 'open') onClose();
+      else if (targetChannel.bufferedAmount <= BACKPRESSURE_RESUME) onLow();
+    }, 250);
+    targetChannel.bufferedAmountLowThreshold = BACKPRESSURE_RESUME;
+    targetChannel.addEventListener('bufferedamountlow', onLow);
+    targetChannel.addEventListener('close', onClose);
+  });
 
-    if (offset >= file.size) {
-      // Transfer complete
-      try {
-        targetChannel.send(JSON.stringify({ type: 'done' }));
-      } catch {
-        // Ignore
-      }
-      onComplete?.();
-      return;
-    }
-
-    // Backpressure: wait if buffer is too full
-    if (targetChannel.bufferedAmount && targetChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-      const onBufferDrain = () => {
-        if (targetChannel.bufferedAmount <= BACKPRESSURE_RESUME) {
-          if (typeof targetChannel.removeEventListener === 'function') {
-            targetChannel.removeEventListener('bufferedamountlow', onBufferDrain);
-          }
-          readNextChunk();
-        }
-      };
-      if (typeof targetChannel.addEventListener === 'function') {
-        try {
-          targetChannel.bufferedAmountLowThreshold = BACKPRESSURE_RESUME;
-          targetChannel.addEventListener('bufferedamountlow', onBufferDrain);
-          return;
-        } catch {}
-      }
-    }
-
-    const end = Math.min(offset + chunkSize, file.size);
-    const blob = file.slice(offset, end);
-    reader.readAsArrayBuffer(blob);
-  }
-
-  reader.onload = (e) => {
-    if (cancelled) return;
-
+  // Driven by promises instead of setTimeout so a backgrounded tab / dimmed
+  // phone screen doesn't throttle the transfer to one chunk per second.
+  (async () => {
     try {
-      targetChannel.send(e.target.result);
-      chunkIndex++;
-      offset += e.target.result.byteLength;
+      while (offset < file.size) {
+        if (cancelled) return;
+        if (targetChannel.readyState !== 'open') {
+          throw new Error('Connection to laptop was lost');
+        }
+        if (targetChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          await waitForDrain();
+          continue;
+        }
 
-      onProgress?.({
-        chunkIndex,
-        totalChunks,
-        bytesSent: offset,
-        totalBytes: file.size,
-        percent: Math.round((offset / file.size) * 100),
-      });
+        const end = Math.min(offset + chunkSize, file.size);
+        const buffer = await file.slice(offset, end).arrayBuffer();
+        if (cancelled) return;
 
-      // Use setTimeout to avoid blocking the UI thread
-      setTimeout(readNextChunk, 0);
+        targetChannel.send(buffer);
+        chunkIndex++;
+        offset += buffer.byteLength;
+
+        const percent = Math.round((offset / file.size) * 100);
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          onProgress?.({
+            chunkIndex,
+            totalChunks,
+            bytesSent: offset,
+            totalBytes: file.size,
+            percent,
+          });
+        }
+      }
+
+      targetChannel.send(JSON.stringify({ type: 'done' }));
+      onComplete?.();
     } catch (err) {
-      onError?.(new Error('Failed to send chunk: ' + err.message));
+      if (!cancelled) onError?.(new Error('Failed to send video: ' + err.message));
     }
-  };
-
-  reader.onerror = () => {
-    onError?.(new Error('Failed to read file chunk'));
-  };
-
-  // Start transfer
-  readNextChunk();
+  })();
 
   return {
     cancel: () => {
@@ -160,6 +153,7 @@ export function receiveFile(channel, callbacks = {}) {
   let receivedChunks = [];
   let receivedBytes = 0;
   let expectedChunkIndex = 0;
+  let lastPercent = -1;
   let cancelled = false;
 
   const handleMessage = (event) => {
@@ -184,6 +178,7 @@ export function receiveFile(channel, callbacks = {}) {
             return;
           }
           meta = msg;
+          lastPercent = -1;
           receivedChunks = [];
           receivedBytes = 0;
           expectedChunkIndex = 0;
@@ -241,10 +236,13 @@ export function receiveFile(channel, callbacks = {}) {
       receivedBytes += data.byteLength;
       expectedChunkIndex++;
 
+      const percent = Math.round((receivedBytes / meta.size) * 100);
+      if (percent === lastPercent) return;
+      lastPercent = percent;
       onProgress?.({
         receivedBytes,
         totalBytes: meta?.size || 0,
-        percent: meta?.size ? Math.round((receivedBytes / meta.size) * 100) : 0,
+        percent,
         chunkCount: receivedChunks.length,
         totalChunks: meta?.totalChunks || 0,
       });
