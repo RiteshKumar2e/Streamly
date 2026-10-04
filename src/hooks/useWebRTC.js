@@ -24,26 +24,49 @@ const CONNECTION_STATES = {
   ERROR: 'error',
 };
 
-const CONNECT_TIMEOUT_MS = 30000;
+const CONNECT_TIMEOUT_MS = 40000; // relayed (TURN) connections over mobile data can be slow
 const OFFER_RESEND_MS = [5000, 12000, 20000];
 
-const NETWORK_HINT = 'Make sure your phone and laptop are on the same Wi-Fi network (not guest Wi-Fi or mobile data), then tap Retry.';
+const NETWORK_HINT = "If your laptop is on your phone's hotspot, a TURN relay is needed (see README). Otherwise put both devices on the same Wi-Fi. Then tap Retry.";
 
-function getIceServers() {
-  const servers = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-  ];
-  // Optional TURN relay — needed when the devices are on different networks / strict NATs
-  const turnUrl = process.env.NEXT_PUBLIC_TURN_URL;
-  if (turnUrl) {
-    servers.push({
-      urls: turnUrl.split(',').map((u) => u.trim()).filter(Boolean),
-      username: process.env.NEXT_PUBLIC_TURN_USERNAME || '',
-      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || '',
-    });
+const FALLBACK_ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+      'turns:openrelay.metered.ca:443?transport=tcp',
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
+
+// STUN + TURN servers from /api/ice (TURN credentials live server-side). Cached
+// for 10 minutes; falls back to a static list if the route is unreachable.
+let iceServersCache = null;
+function loadIceServers() {
+  if (iceServersCache && Date.now() - iceServersCache.at < 10 * 60 * 1000) {
+    return iceServersCache.promise;
   }
-  return servers;
+  const promise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch('/api/ice', { cache: 'no-store', signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.iceServers) && data.iceServers.length) return data.iceServers;
+      }
+    } catch {}
+    iceServersCache = null; // retry next time
+    return FALLBACK_ICE_SERVERS;
+  })();
+  iceServersCache = { at: Date.now(), promise };
+  return promise;
 }
 
 // ICE candidates come in bursts; batch them so each side makes ~2-3 relay
@@ -241,12 +264,13 @@ export default function useWebRTC(mode) {
 
     // Last answer per attempt, so a re-sent offer gets the same answer back
     const answers = new Map();
+    loadIceServers(); // prefetch so answering an offer isn't delayed
 
     const answerOffer = async (msg, signal) => {
       const attemptId = msg.from;
 
       // Duplicate offer for the attempt we're already handling: re-send our answer
-      if (attemptRef.current === attemptId && pcRef.current) {
+      if (attemptRef.current === attemptId) {
         const prev = answers.get(attemptId);
         if (prev) signal.send({ type: 'answer', to: attemptId, sdp: prev });
         return;
@@ -258,7 +282,10 @@ export default function useWebRTC(mode) {
       setConnectionState(CONNECTION_STATES.PAIRING);
       setConnectionStatusText('Phone found — connecting...');
 
-      const pc = new RTCPeerConnection({ iceServers: getIceServers() });
+      const iceServers = await loadIceServers();
+      if (attemptRef.current !== attemptId || isCleanedUpRef.current) return;
+
+      const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
 
       pc.ondatachannel = (e) => {
@@ -332,6 +359,17 @@ export default function useWebRTC(mode) {
     attemptRef.current = attemptId;
     const isCurrent = () => attemptRef.current === attemptId && !isCleanedUpRef.current;
 
+    // Give up on this attempt: stop timers and signaling so nothing keeps
+    // hitting the relay in the background, then show the error (Retry starts fresh)
+    const fail = (message) => {
+      clearTimers();
+      if (signalRef.current) {
+        signalRef.current.close();
+        signalRef.current = null;
+      }
+      handleError(message);
+    };
+
     setConnectionState(CONNECTION_STATES.CONNECTING);
     setConnectionStatusText('Reaching your laptop...');
     setError(null);
@@ -369,10 +407,10 @@ export default function useWebRTC(mode) {
       signalRef.current = signal;
 
       // Subscribe before sending the offer, so the laptop's answer can't be missed
-      await signal.ready;
+      const [, iceServers] = await Promise.all([signal.ready, loadIceServers()]);
       if (!isCurrent()) return;
 
-      const pc = new RTCPeerConnection({ iceServers: getIceServers() });
+      const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
 
       // Phone creates the DataChannel; signaling is no longer needed once it opens
@@ -395,7 +433,7 @@ export default function useWebRTC(mode) {
         if (pcRef.current !== pc || !isCurrent()) return;
         console.log('Phone connection state:', pc.connectionState);
         if (pc.connectionState === 'failed') {
-          handleError('Could not connect directly to your laptop. ' + NETWORK_HINT);
+          fail('Could not connect to your laptop. ' + NETWORK_HINT);
         }
       };
 
@@ -407,7 +445,7 @@ export default function useWebRTC(mode) {
       const sent = await signal.send(offerMsg);
       if (!isCurrent()) return;
       if (!sent) {
-        handleError('Could not reach the pairing service. Check your internet connection and tap Retry.');
+        fail('Could not reach the pairing service. Check your internet connection and tap Retry.');
         return;
       }
       console.log('Phone sent offer to laptop');
@@ -421,14 +459,14 @@ export default function useWebRTC(mode) {
       addTimer(() => {
         if (!isCurrent()) return;
         if (channelRef.current && channelRef.current.readyState === 'open') return;
-        handleError(answered
-          ? 'Found your laptop but could not open a direct connection. ' + NETWORK_HINT
+        fail(answered
+          ? 'Found your laptop but could not open a connection. ' + NETWORK_HINT
           : 'Laptop did not respond. Make sure the Streamly page is still open on your laptop (or refresh it for a new QR code), then tap Retry.');
       }, CONNECT_TIMEOUT_MS);
     } catch (err) {
-      if (isCurrent()) handleError('Failed to connect: ' + err.message);
+      if (isCurrent()) fail('Failed to connect: ' + err.message);
     }
-  }, [cleanup, setupChannel, flushCandidates, handleError, addTimer]);
+  }, [cleanup, setupChannel, flushCandidates, handleError, addTimer, clearTimers]);
 
   /**
    * Send control message over DataChannel.

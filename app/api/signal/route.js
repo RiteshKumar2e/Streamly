@@ -27,6 +27,7 @@ export async function POST(req) {
       method: 'POST',
       body: JSON.stringify(message),
       cache: 'no-store',
+      signal: AbortSignal.timeout(6000),
     });
 
     if (!res.ok) {
@@ -56,7 +57,7 @@ export async function GET(req) {
 
     let messages = [];
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
       if (!res.ok) {
         console.error('Signal GET failed with status', res.status);
         return NextResponse.json({ messages, error: 'Relay unavailable' }, { status: 502 });

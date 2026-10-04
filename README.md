@@ -183,13 +183,25 @@ The server starts at `http://0.0.0.0:5173`. Vite will print your local network a
 6. Select your movie on Android and tap **Start Watching**. Wait for the transfer to finish; the laptop then creates a local Blob URL and begins playback.
 7. Use the phone as the remote. If the connection is interrupted, refresh both pages and scan a newly generated QR code.
 
-### Important deployment note (e.g. Vercel)
+### Deployment (Vercel)
 
-If you are deploying the frontend to a serverless platform like **Vercel** or **Netlify**:
-1. These platforms do not support hosting a continuous WebSocket server.
-2. You must host the signaling server (`server/signaling-server.js`) on a service that supports WebSockets (like Render, Railway, or Heroku).
-3. Once your signaling server is deployed (e.g., `wss://your-signaling-server.onrender.com`), add an environment variable to your Vercel project:
-   - Key: `VITE_SIGNALING_URL`
-   - Value: `wss://your-signaling-server.onrender.com`
+No separate server is needed. Pairing messages (offer/answer/ICE) go through
+ntfy.sh topics: the browser connects directly over SSE, with `/api/signal` as a fallback.
 
-For local development over Wi-Fi, the development server (port 5173) and signaling relay (port 8787) must be reachable on the LAN and the Windows firewall must allow both ports. Streamly intentionally does not add a database, cloud upload, or hidden file access.
+### Phone hotspot mode (laptop on the phone's hotspot, phone on mobile data)
+
+In this setup the two devices can't reach each other directly over WebRTC.
+Android Chrome only uses the mobile-data network for WebRTC, and the carrier's
+NAT doesn't loop traffic back to the phone. The connection needs a **TURN relay**.
+`/api/ice` hands TURN credentials to the browser. Set ONE of these in Vercel
+→ Settings → Environment Variables, then redeploy:
+
+| Provider | Variables |
+| --- | --- |
+| Cloudflare TURN (free 1 TB/month): dash.cloudflare.com → Calls/Realtime → TURN | `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` |
+| Metered (free 20 GB/month): metered.ca → TURN | `METERED_DOMAIN` (e.g. `myapp.metered.live`), `METERED_API_KEY` |
+| Any TURN server | `TURN_URL` (comma separated), `TURN_USERNAME`, `TURN_CREDENTIAL` |
+
+If none is set, a free public relay is used on a best-effort basis. When the
+devices are on the same Wi-Fi, WebRTC still connects directly and the relay isn't used.
+Relayed video goes over mobile data, so large movies use data and transfer at your 4G upload speed.
