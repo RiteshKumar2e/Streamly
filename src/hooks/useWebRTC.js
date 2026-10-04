@@ -67,14 +67,7 @@ export default function useWebRTC(mode) {
   const onControlMessageRef = useRef(null);
   const onTransferChannelReadyRef = useRef(null);
   const cleanedUpRef = useRef(false);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      cleanedUpRef.current = true;
-      cleanup();
-    };
-  }, []);
+  const cleanupTimeoutRef = useRef(null);
 
   const cleanup = useCallback(() => {
     if (connRef.current) {
@@ -86,6 +79,24 @@ export default function useWebRTC(mode) {
       peerRef.current = null;
     }
   }, []);
+
+  const cancelPendingCleanup = useCallback(() => {
+    if (cleanupTimeoutRef.current) {
+      clearTimeout(cleanupTimeoutRef.current);
+      cleanupTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount (delayed to survive React 18 StrictMode double-mount)
+  useEffect(() => {
+    cancelPendingCleanup();
+    return () => {
+      cleanupTimeoutRef.current = setTimeout(() => {
+        cleanedUpRef.current = true;
+        cleanup();
+      }, 300);
+    };
+  }, [cancelPendingCleanup, cleanup]);
 
   const handleError = useCallback((message) => {
     if (cleanedUpRef.current) return;
@@ -161,6 +172,14 @@ export default function useWebRTC(mode) {
    * Laptop: Create PeerJS peer and display session in QR code.
    */
   const startLaptopSession = useCallback(async () => {
+    cancelPendingCleanup();
+    cleanedUpRef.current = false;
+
+    // If already active peer exists, don't recreate
+    if (peerRef.current && !peerRef.current.destroyed && !peerRef.current.disconnected) {
+      return;
+    }
+
     try {
       setConnectionState(CONNECTION_STATES.PAIRING);
       setError(null);
@@ -218,13 +237,21 @@ export default function useWebRTC(mode) {
     } catch (err) {
       handleError('Failed to start session: ' + err.message);
     }
-  }, [setupConnection, handleError]);
+  }, [cancelPendingCleanup, setupConnection, handleError]);
 
   /**
    * Phone: Connect to laptop's PeerJS peer using session ID from QR code.
    */
   const joinLaptopSession = useCallback(async (laptopSessionId) => {
     if (!laptopSessionId) return;
+
+    cancelPendingCleanup();
+    cleanedUpRef.current = false;
+
+    // If already connected or connecting to this session, don't recreate
+    if (peerRef.current && !peerRef.current.destroyed) {
+      return;
+    }
 
     try {
       setConnectionState(CONNECTION_STATES.CONNECTING);
@@ -281,7 +308,7 @@ export default function useWebRTC(mode) {
     } catch (err) {
       handleError('Failed to connect: ' + err.message);
     }
-  }, [setupConnection, handleError]);
+  }, [cancelPendingCleanup, setupConnection, handleError]);
 
   /**
    * Send control message (JSON).
@@ -344,20 +371,24 @@ export default function useWebRTC(mode) {
    * Disconnect.
    */
   const disconnect = useCallback(() => {
+    cancelPendingCleanup();
+    cleanedUpRef.current = true;
     cleanup();
     setConnectionState(CONNECTION_STATES.DISCONNECTED);
     setSessionId('');
-  }, [cleanup]);
+  }, [cancelPendingCleanup, cleanup]);
 
   /**
    * Reset to idle.
    */
   const reset = useCallback(() => {
+    cancelPendingCleanup();
+    cleanedUpRef.current = true;
     cleanup();
     setConnectionState(CONNECTION_STATES.IDLE);
     setError(null);
     setSessionId('');
-  }, [cleanup]);
+  }, [cancelPendingCleanup, cleanup]);
 
   return {
     // State

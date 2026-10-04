@@ -36,12 +36,8 @@ export default function Laptop() {
 
   const [lastControlMessage, setLastControlMessage] = useState(null);
   const [incomingFileInfo, setIncomingFileInfo] = useState(null);
-  const sessionStartedRef = useRef(false);
-
   // Start laptop PeerJS session on mount
   useEffect(() => {
-    if (sessionStartedRef.current) return;
-    sessionStartedRef.current = true;
     startLaptopSession();
   }, [startLaptopSession]);
 
