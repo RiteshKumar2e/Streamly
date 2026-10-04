@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import useWebRTC, { CONNECTION_STATES } from '../hooks/useWebRTC.js';
 import useVideoTransfer from '../hooks/useVideoTransfer.js';
 import PairingCode from '../components/PairingCode.jsx';
-import QRCode from '../components/QRCode.jsx';
 import FilePicker from '../components/FilePicker.jsx';
 import ConnectionStatus from '../components/ConnectionStatus.jsx';
 import RemoteControls from '../components/RemoteControls.jsx';
@@ -10,6 +10,8 @@ import ProgressBar from '../components/ProgressBar.jsx';
 import ErrorMessage from '../components/ErrorMessage.jsx';
 
 export default function Phone() {
+  const [searchParams] = useSearchParams();
+  const scannedCode = searchParams.get('code') || '';
   const {
     connectionState,
     setConnectionState,
@@ -45,11 +47,14 @@ export default function Phone() {
   const [manualAnswerInput, setManualAnswerInput] = useState('');
   const [copiedOffer, setCopiedOffer] = useState(false);
   const [hasStartedWatching, setHasStartedWatching] = useState(false);
+  const pairingStartedRef = useRef(false);
 
   // Initialize pairing when entering phone mode
   useEffect(() => {
-    startPairing();
-  }, [startPairing]);
+    if (pairingStartedRef.current) return;
+    pairingStartedRef.current = true;
+    startPairing(scannedCode);
+  }, [scannedCode, startPairing]);
 
   // Hook up incoming control messages from laptop
   useEffect(() => {
@@ -145,11 +150,6 @@ export default function Phone() {
   };
 
   // Generate QR pairing link
-  const rawCode = pairingCode ? pairingCode.replace(/\s/g, '') : '';
-  const pairingUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/laptop?code=${rawCode}`
-    : `https://streamly.local/laptop?code=${rawCode}`;
-
   const isConnected = connectionState === CONNECTION_STATES.CONNECTED ||
                       connectionState === CONNECTION_STATES.READY ||
                       connectionState === CONNECTION_STATES.PLAYING ||
@@ -184,8 +184,6 @@ export default function Phone() {
         {/* State 1: Pairing (Not yet connected) */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
-            <QRCode value={pairingUrl} size={180} />
-
             <PairingCode code={pairingCode || '------'} label="Pairing Code" />
 
             <div className="waiting-text">

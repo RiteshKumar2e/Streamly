@@ -1,7 +1,7 @@
 /**
  * Streamly — Signaling Service
  *
- * Since Streamly has NO backend server, WebRTC signaling must happen manually.
+ * Streamly uses a tiny WebSocket signaling relay for pairing only.
  *
  * This service provides two approaches:
  *
@@ -121,6 +121,72 @@ export class BroadcastSignaling {
       this.channel.close();
       this.channel = null;
     }
+    this.listeners.clear();
+  }
+}
+
+/**
+ * WebSocket signaling relay for cross-device pairing.
+ * The relay forwards only SDP/ICE metadata and never receives video data.
+ */
+export class WebSocketSignaling {
+  constructor(pairingCode, role) {
+    this.code = normalizePairingCode(pairingCode);
+    this.role = role;
+    this.socket = null;
+    this.listeners = new Map();
+  }
+
+  connect() {
+    return new Promise((resolve, reject) => {
+      if (!window.WebSocket) {
+        reject(new Error('WebSocket is not supported by this browser.'));
+        return;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${protocol}//${window.location.hostname}:8787`);
+      this.socket = socket;
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ type: 'join', room: this.code, role: this.role }));
+        resolve();
+      };
+      socket.onerror = () => reject(new Error('Unable to reach the Streamly signaling server.'));
+      socket.onclose = () => this.emit('close');
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type && message.type !== 'joined') {
+            this.emit(message.type, message.data);
+          }
+        } catch {
+          this.emit('error', new Error('The signaling server sent invalid data.'));
+        }
+      };
+    });
+  }
+
+  on(type, callback) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type).add(callback);
+  }
+
+  emit(type, data) {
+    this.listeners.get(type)?.forEach((callback) => callback(data));
+  }
+
+  send(type, data) {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type, room: this.code, data }));
+      return true;
+    }
+    return false;
+  }
+
+  disconnect() {
+    this.socket?.close();
+    this.socket = null;
     this.listeners.clear();
   }
 }

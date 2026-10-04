@@ -7,6 +7,8 @@ import ConnectionStatus from '../components/ConnectionStatus.jsx';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import ProgressBar from '../components/ProgressBar.jsx';
 import ErrorMessage from '../components/ErrorMessage.jsx';
+import PairingCode from '../components/PairingCode.jsx';
+import QRCode from '../components/QRCode.jsx';
 
 export default function Laptop() {
   const [searchParams] = useSearchParams();
@@ -14,6 +16,7 @@ export default function Laptop() {
 
   const {
     connectionState,
+    pairingCode,
     setConnectionState,
     error,
     encodedOffer: generatedAnswer,
@@ -47,6 +50,13 @@ export default function Laptop() {
   const [manualOfferInput, setManualOfferInput] = useState('');
   const [copiedAnswer, setCopiedAnswer] = useState(false);
   const [incomingFileInfo, setIncomingFileInfo] = useState(null);
+  const autoJoinRef = useRef(false);
+
+  useEffect(() => {
+    if (!pairingCode || autoJoinRef.current || initialCode) return;
+    autoJoinRef.current = true;
+    joinPairing(pairingCode);
+  }, [initialCode, joinPairing, pairingCode]);
 
   // Auto-fill code from URL query param if present
   useEffect(() => {
@@ -127,6 +137,10 @@ export default function Laptop() {
                       connectionState === CONNECTION_STATES.TRANSFERRING;
 
   const hasVideo = !!videoUrl;
+  const rawPairingCode = pairingCode.replace(/\s/g, '');
+  const phonePairingUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/phone?code=${rawPairingCode}`
+    : '';
 
   return (
     <div className="mode-page" id="laptop-page">
@@ -140,7 +154,7 @@ export default function Laptop() {
           <p>
             {isConnected
               ? 'Waiting for a movie to be selected on your phone...'
-              : 'Enter the pairing code shown on your phone screen.'}
+              : 'Scan this QR code with your phone to connect automatically.'}
           </p>
         </div>
       )}
@@ -159,6 +173,11 @@ export default function Laptop() {
         {/* State 1: Enter Pairing Code */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
+            <QRCode value={phonePairingUrl} size={220} />
+            <PairingCode code={pairingCode || '------'} label="Scan to Connect" />
+            <p className="input-validation-hint">
+              Open your phone camera, scan the QR code, then choose Streamly.
+            </p>
             <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%' }}>
               <div className="pairing-code-label">Enter 6-Digit Pairing Code</div>
               <input

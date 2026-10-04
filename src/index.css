@@ -1981,11 +1981,11 @@ img, video {
   display: none;
 }
 
-.mobile-menu-toggle {
+.mobile-menu-toggle.mobile-only {
+  display: none;
   width: 40px;
   height: 40px;
   border-radius: var(--radius-sm);
-  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-primary);
@@ -2051,7 +2051,7 @@ img, video {
   .desktop-only {
     display: none !important;
   }
-  .mobile-only {
+  .mobile-menu-toggle.mobile-only {
     display: flex !important;
   }
 }
@@ -2437,4 +2437,3 @@ body,
   max-width: 100%;
   overflow-x: hidden;
 }
-

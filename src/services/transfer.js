@@ -19,6 +19,7 @@
 const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64KB — safe for most WebRTC implementations
 const MAX_BUFFERED_AMOUNT = 1024 * 1024; // 1MB — pause sending when buffer exceeds this
 const BACKPRESSURE_RESUME = 256 * 1024; // 256KB — resume sending when buffer drops below
+const MAX_VIDEO_SIZE = 8 * 1024 ** 3;
 
 /**
  * Send a file over a DataChannel in chunks.
@@ -35,6 +36,11 @@ export function sendFile(file, channel, callbacks = {}) {
   let offset = 0;
   const chunkSize = DEFAULT_CHUNK_SIZE;
   const totalChunks = Math.ceil(file.size / chunkSize);
+
+  if (!(file instanceof File) || !file.type.startsWith('video/') || file.size <= 0 || file.size > MAX_VIDEO_SIZE) {
+    onError?.(new Error('This video is empty, unsupported, or larger than 8 GB.'));
+    return { cancel: () => {} };
+  }
 
   // Send metadata first
   const meta = {
@@ -143,6 +149,7 @@ export function receiveFile(channel, callbacks = {}) {
   let meta = null;
   let receivedChunks = [];
   let receivedBytes = 0;
+  let expectedChunkIndex = 0;
   let cancelled = false;
 
   const handleMessage = (event) => {
@@ -156,14 +163,28 @@ export function receiveFile(channel, callbacks = {}) {
         const msg = JSON.parse(data);
 
         if (msg.type === 'meta') {
+          if (typeof msg.name !== 'string' || msg.name.length === 0 || msg.name.length > 255
+            || !Number.isSafeInteger(msg.size) || msg.size <= 0 || msg.size > MAX_VIDEO_SIZE
+            || typeof msg.mimeType !== 'string' || !msg.mimeType.startsWith('video/')
+            || !Number.isSafeInteger(msg.totalChunks) || msg.totalChunks <= 0
+            || !Number.isSafeInteger(msg.chunkSize) || msg.chunkSize <= 0) {
+            onError?.(new Error('The received video metadata is invalid.'));
+            cancelled = true;
+            return;
+          }
           meta = msg;
           receivedChunks = [];
           receivedBytes = 0;
+          expectedChunkIndex = 0;
           onMeta?.(meta);
           return;
         }
 
         if (msg.type === 'done') {
+          if (!meta || receivedBytes !== meta.size || expectedChunkIndex !== meta.totalChunks) {
+            onError?.(new Error('The video transfer ended before all chunks arrived.'));
+            return;
+          }
           // Assemble the file
           const blob = new Blob(receivedChunks, {
             type: meta?.mimeType || 'video/mp4',
@@ -186,6 +207,9 @@ export function receiveFile(channel, callbacks = {}) {
         if (msg.type === 'cancel') {
           receivedChunks = [];
           receivedBytes = 0;
+          meta = null;
+          expectedChunkIndex = 0;
+          onError?.(new Error('The phone cancelled the video transfer.'));
           return;
         }
       } catch {
@@ -196,8 +220,15 @@ export function receiveFile(channel, callbacks = {}) {
 
     // Binary data (ArrayBuffer)
     if (data instanceof ArrayBuffer) {
+      if (!meta || data.byteLength === 0 || data.byteLength > meta.chunkSize
+        || receivedBytes + data.byteLength > meta.size) {
+        onError?.(new Error('The received video chunk is invalid.'));
+        cancelled = true;
+        return;
+      }
       receivedChunks.push(data);
       receivedBytes += data.byteLength;
+      expectedChunkIndex++;
 
       onProgress?.({
         receivedBytes,
@@ -217,6 +248,8 @@ export function receiveFile(channel, callbacks = {}) {
       channel.removeEventListener('message', handleMessage);
       receivedChunks = [];
       receivedBytes = 0;
+      meta = null;
+      expectedChunkIndex = 0;
     },
   };
 }

@@ -2,13 +2,13 @@
 
 > **Your phone. Your movie. Your big screen.**
 
-Streamly allows you to select a movie or video file stored directly on your phone and stream it seamlessly to your laptop over a local browser-to-browser connection. Your phone acts as the video source and TV-style remote control, while your laptop transforms into a cinematic big-screen video player.
+Streamly lets you select a movie or video file stored directly on your phone and transfer it peer-to-peer to your laptop over a local browser-to-browser connection. Your phone acts as the video source and TV-style remote control, while your laptop transforms into a cinematic big-screen video player.
 
 ---
 
 ## 1. What Streamly Is
 
-Streamly is a client-only web application built with React, Vite, and native Web APIs. It enables peer-to-peer media streaming and playback synchronization between mobile devices and personal computers without routing video data through external servers, cloud databases, or third-party hosting providers.
+Streamly is a React/Vite web application with a tiny WebSocket signaling relay. The relay only helps the phone and laptop exchange WebRTC connection metadata; the selected movie and remote-control messages travel directly peer-to-peer and are never uploaded to the relay.
 
 * **Privacy-First**: The movie remains on your phone. It is never uploaded to any cloud storage or server.
 * **Direct Control**: Play, pause, seek, adjust volume, and toggle mute directly from your phone screen.
@@ -67,7 +67,7 @@ Streamly/
 │   ├── services/
 │   │   ├── webrtc.js            # Standardized RTCPeerConnection & DataChannels
 │   │   ├── transfer.js          # Slicing, backpressure & ArrayBuffer assembly
-│   │   └── signaling.js         # BroadcastChannel & SDP encode/decode utilities
+│   │   └── signaling.js         # WebSocket relay client & SDP utilities
 │   │
 │   ├── pages/
 │   │   ├── Home.jsx             # Hero landing page & how-it-works guide
@@ -88,9 +88,9 @@ Streamly/
 
 * **WebRTC API (`RTCPeerConnection`, `RTCDataChannel`)**: Establishes peer-to-peer data channels for control messages (`control`) and binary video streaming (`transfer`).
 * **File & Blob API (`File`, `Blob`, `FileReader`, `URL.createObjectURL()`)**: Slices video files on demand without reading the entire file into JavaScript memory.
-* **BroadcastChannel API**: Enables zero-configuration signaling when testing phone and laptop views across tabs within the same browser instance.
+* **WebSocket**: Relays short-lived pairing, SDP, and ICE metadata so separate phone and laptop browsers can discover each other.
 * **Fullscreen API**: Powers one-click immersion on the laptop player.
-* **Clipboard API (`navigator.clipboard`)**: Provides single-tap copying of serverless SDP exchange tokens.
+* **Clipboard API (`navigator.clipboard`)**: Supports optional copying of pairing details.
 
 ---
 
@@ -125,25 +125,20 @@ In standard commercial applications, a lightweight **Signaling Server** (using W
 
 ---
 
-## 7. What is Possible With a React-Only / Browser-Only Architecture
+## 7. Automatic QR pairing
 
-Because this project adheres to a strict **zero-backend, zero-database constraint**:
+The laptop creates a short-lived six-digit room and displays a QR code containing the phone route. The phone scans that QR code with the Android camera and opens Streamly with the room code. Both browsers connect to the WebSocket relay, exchange the WebRTC offer/answer, and then disconnect from signaling. The relay never sees the selected file.
 
-1. **Same Browser / Testing Mode**: Streamly utilizes the `BroadcastChannel` API. If you open `http://localhost:5173/phone` and `http://localhost:5173/laptop` in two windows, they detect each other and pair automatically via the pairing code without any manual steps.
-2. **Cross-Device Mode (Phone to Laptop)**: Since independent browser instances on different devices cannot directly discover each other without an external signaling bridge, Streamly provides an honest, built-in **Direct Signaling Modal**:
-   * Phone creates an Offer → Click **Copy Offer**
-   * Paste into Laptop → Click **Generate Answer**
-   * Paste Answer back into Phone → Click **Complete Connection**
-   * The direct WebRTC peer connection is established, and all subsequent video streaming and remote commands run peer-to-peer over your local Wi-Fi.
-
-> **Extensibility**: The signaling logic in `src/services/signaling.js` is isolated into a modular class. When deploying to production with a WebSocket server, you only need to add a WebSocket adapter without touching the WebRTC or UI layers.
+The QR code is a convenient way to carry the room identifier; it does not contain the movie or the WebRTC session itself. A pairing room accepts one phone and one laptop and is removed when both clients disconnect.
 
 ---
 
 ## 8. Browser Limitations & Formats
 
 * **Container & Codec Compatibility**: HTML5 `<video>` supports video formats supported natively by the receiving browser (MP4 with H.264/AAC, WebM with VP8/VP9). Non-standard formats (such as raw AVI or MKV with unsupported audio tracks) depend on browser decoding capabilities.
-* **Memory Limits**: The browser limits total Blob sizes in memory. For extremely large videos (e.g. 4K files > 4 GB), Chrome/Edge 64-bit performs best.
+* **Playback buffering**: The current browser-only implementation sends the file in ordered chunks, then creates a Blob URL on the laptop. It does not Base64-encode the file and does not store it in React state, but the completed Blob still requires significant laptop memory before playback starts.
+* **Large files**: Transfers are rejected above 8 GB and very large files can fail if the browser cannot allocate a Blob. This is an honest limitation of playing an arbitrary, non-fragmented local movie without a server or persistent browser file sink. A future MediaSource implementation can improve this for compatible fragmented media, but cannot safely support every phone video container.
+* **Connection security**: WebRTC uses public STUN servers only for ICE discovery. Media and control data are peer-to-peer after connection; signaling text contains session metadata, not the movie.
 
 ---
 
@@ -159,7 +154,7 @@ Because this project adheres to a strict **zero-backend, zero-database constrain
 # 1. Install dependencies
 npm install
 
-# 2. Start the Vite development server on all network interfaces
+# 2. Start Vite and the WebSocket signaling relay
 npm run dev
 ```
 
@@ -173,21 +168,21 @@ The server starts at `http://0.0.0.0:5173`. Vite will print your local network a
 
 ## 10. How to Test
 
-### Scenario A: Instant Local Test (Same Machine, Two Tabs)
-1. Open `http://localhost:5173/phone` in Tab 1.
-2. Note the 6-digit code (e.g., `482 731`).
-3. Open `http://localhost:5173/laptop` in Tab 2.
-4. Enter `482 731` and tap **Connect Phone**.
-5. The `BroadcastChannel` establishes the connection automatically.
-6. On Tab 1, pick a video file and click **Start Watching**.
-7. Watch Tab 2 receive the video and use Tab 1 as your TV remote.
+### Scenario A: Local test (same machine)
+1. Run `npm run dev`.
+2. Open the laptop using the LAN URL Vite prints, for example `http://192.168.1.15:5173/laptop`. Do not use `localhost` for the QR flow because the phone would resolve `localhost` to itself.
+3. Open the QR target (`http://localhost:5173/phone?code=...`) in another browser tab, or enter the displayed room code on `/phone`.
+4. Select a video on the phone view and tap **Start Watching**.
 
 ### Scenario B: Real Cross-Device Test (Android Phone & Windows Laptop)
 1. Ensure both your Phone and Laptop are connected to the **same Wi-Fi network**.
 2. Run `npm run dev` on your laptop. Note the `Network` IP (e.g. `http://192.168.1.15:5173`).
-3. On your **Laptop**, open `http://localhost:5173/laptop`.
-4. On your **Android Phone**, open `http://192.168.1.15:5173/phone` in Chrome.
-5. In Phone mode, tap **⚙️ Direct Signaling (Cross-Device)** and copy the Offer.
-6. On Laptop, click **⚙️ Direct Signaling (Cross-Device)**, paste the Offer, and copy the generated Answer.
-7. Paste the Answer into the Phone modal and click **Complete Connection**.
-8. Select your movie on Android and enjoy big-screen streaming with synchronized remote controls!
+3. On your **Laptop**, open the LAN URL, for example `http://192.168.1.15:5173/laptop`.
+4. On your **Android Phone**, scan the QR code shown on the laptop using the phone camera.
+5. Choose **Open in Chrome** when Android offers the link. Streamly will join the room automatically.
+6. Select your movie on Android and tap **Start Watching**. Wait for the transfer to finish; the laptop then creates a local Blob URL and begins playback.
+7. Use the phone as the remote. If the connection is interrupted, refresh both pages and scan a newly generated QR code.
+
+### Important deployment note
+
+For Android Chrome to load the app from a Windows laptop over Wi-Fi, the development server (port 5173) and signaling relay (port 8787) must be reachable on the LAN and the Windows firewall must allow both ports. Production deployments should use HTTPS/WSS. Streamly intentionally does not add a database, cloud upload, or hidden file access.

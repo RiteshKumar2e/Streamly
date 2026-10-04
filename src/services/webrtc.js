@@ -209,11 +209,68 @@ export function sendControlMessage(channel, message) {
  */
 export function parseControlMessage(data) {
   try {
+    if (typeof data !== 'string' || data.length > 2048) {
+      return null;
+    }
+
     const msg = JSON.parse(data);
     const validTypes = ['play', 'pause', 'seek', 'volume', 'mute', 'state', 'file-info', 'file-ready', 'request-file', 'transfer-complete', 'error'];
-    if (msg && validTypes.includes(msg.type)) {
+    if (!msg || typeof msg !== 'object' || !validTypes.includes(msg.type)) {
+      return null;
+    }
+
+    if (['play', 'pause', 'request-file', 'transfer-complete'].includes(msg.type)) {
       return msg;
     }
+
+    if (msg.type === 'seek' && Number.isFinite(msg.time) && msg.time >= 0) {
+      return { type: msg.type, time: msg.time };
+    }
+
+    if (['volume', 'mute'].includes(msg.type)) {
+      if (msg.type === 'volume' && Number.isFinite(msg.value)) {
+        return { type: msg.type, value: Math.max(0, Math.min(1, msg.value)) };
+      }
+      if (msg.type === 'mute' && typeof msg.value === 'boolean') {
+        return { type: msg.type, value: msg.value };
+      }
+      return null;
+    }
+
+    if (msg.type === 'state') {
+      if (!Number.isFinite(msg.currentTime) || !Number.isFinite(msg.duration)
+        || typeof msg.paused !== 'boolean' || !Number.isFinite(msg.volume)
+        || typeof msg.muted !== 'boolean') {
+        return null;
+      }
+      return {
+        type: msg.type,
+        currentTime: Math.max(0, msg.currentTime),
+        duration: Math.max(0, msg.duration),
+        paused: msg.paused,
+        volume: Math.max(0, Math.min(1, msg.volume)),
+        muted: msg.muted,
+      };
+    }
+
+    if (msg.type === 'file-info') {
+      if (typeof msg.name !== 'string' || msg.name.length === 0 || msg.name.length > 255
+        || !Number.isSafeInteger(msg.size) || msg.size <= 0 || msg.size > 8 * 1024 ** 3
+        || typeof msg.mimeType !== 'string' || !msg.mimeType.startsWith('video/')) {
+        return null;
+      }
+      return {
+        type: msg.type,
+        name: msg.name,
+        size: msg.size,
+        mimeType: msg.mimeType,
+      };
+    }
+
+    if (msg.type === 'error' && typeof msg.message === 'string' && msg.message.length <= 500) {
+      return { type: msg.type, message: msg.message };
+    }
+
     return null;
   } catch {
     return null;

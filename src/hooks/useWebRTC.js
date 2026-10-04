@@ -16,7 +16,7 @@ import {
   parseControlMessage,
 } from '../services/webrtc.js';
 import {
-  BroadcastSignaling,
+  WebSocketSignaling,
   generatePairingCode,
   normalizePairingCode,
   encodeSDP,
@@ -59,9 +59,7 @@ export default function useWebRTC(mode) {
 
   // Generate pairing code for phone mode
   useEffect(() => {
-    if (mode === 'phone') {
-      setPairingCode(generatePairingCode());
-    }
+    setPairingCode(generatePairingCode());
   }, [mode]);
 
   // Cleanup on unmount
@@ -134,22 +132,25 @@ export default function useWebRTC(mode) {
     };
 
     channel.onerror = () => {
-      handleError('Transfer channel error');
+      handleError('Transfer channel error. The connection may have been interrupted.');
     };
+
+    if (channel.readyState === 'open') {
+      onTransferChannelReadyRef.current?.(channel);
+    }
   }, [handleError]);
 
   /**
    * Phone: Initiate pairing.
-   * Tries BroadcastChannel first (for same-browser testing),
-   * then falls back to manual SDP exchange.
+   * Uses the short-lived WebSocket relay for cross-device SDP exchange.
    */
-  const startPairing = useCallback(async () => {
+  const startPairing = useCallback(async (codeOverride = '') => {
     try {
       setConnectionState(CONNECTION_STATES.PAIRING);
       setError(null);
 
-      const code = pairingCode || generatePairingCode();
-      if (!pairingCode) setPairingCode(code);
+      const code = codeOverride || pairingCode || generatePairingCode();
+      setPairingCode(code);
       const normalizedCode = normalizePairingCode(code);
 
       // Create WebRTC offer
@@ -171,28 +172,23 @@ export default function useWebRTC(mode) {
         },
       });
 
-      // Try BroadcastChannel signaling
-      const signaling = new BroadcastSignaling(normalizedCode);
-      const bcSupported = signaling.connect();
+      const signaling = new WebSocketSignaling(normalizedCode, 'phone');
+      signaling.on('answer', async (encodedAnswer) => {
+        try {
+          const parsed = decodeSDP(encodedAnswer);
+          if (!parsed) throw new Error('Invalid answer received.');
+          setConnectionState(CONNECTION_STATES.CONNECTING);
+          await acceptAnswer(pc, parsed.sdp);
+        } catch (err) {
+          handleError('Failed to process answer: ' + err.message);
+        }
+      });
+      signaling.on('error', (message) => {
+        handleError(message instanceof Error ? message.message : String(message));
+      });
       signalingRef.current = signaling;
-
-      if (bcSupported) {
-        // Send offer via BroadcastChannel
-        signaling.send('offer', encodeSDP(offer));
-
-        // Listen for answer
-        signaling.on('answer', async (encodedAnswer) => {
-          try {
-            const parsed = decodeSDP(encodedAnswer);
-            if (parsed) {
-              setConnectionState(CONNECTION_STATES.CONNECTING);
-              await acceptAnswer(pc, parsed.sdp);
-            }
-          } catch (err) {
-            handleError('Failed to process answer: ' + err.message);
-          }
-        });
-      }
+      await signaling.connect();
+      signaling.send('offer', encodeSDP(offer));
 
       // Also prepare manual signaling
       setEncodedOffer(encodeSDP(offer));
@@ -212,69 +208,51 @@ export default function useWebRTC(mode) {
 
       const normalizedCode = normalizePairingCode(inputCode);
 
-      // Try BroadcastChannel first
-      const signaling = new BroadcastSignaling(normalizedCode);
-      const bcSupported = signaling.connect();
+      const signaling = new WebSocketSignaling(normalizedCode, 'laptop');
       signalingRef.current = signaling;
+      signaling.on('offer', async (encodedOfferData) => {
+        try {
+          const parsed = decodeSDP(encodedOfferData);
+          if (parsed) {
+            setConnectionState(CONNECTION_STATES.CONNECTING);
 
-      if (bcSupported) {
-        // Listen for offer
-        signaling.on('offer', async (encodedOfferData) => {
-          try {
-            const parsed = decodeSDP(encodedOfferData);
-            if (parsed) {
-              setConnectionState(CONNECTION_STATES.CONNECTING);
+            const { pc, answer } = await createAnswer(parsed.sdp);
+            pcRef.current = pc;
 
-              const { pc, answer } = await createAnswer(parsed.sdp);
-              pcRef.current = pc;
+            // Set up data channel listeners (laptop receives channels)
+            pc.ondatachannel = (event) => {
+              const ch = event.channel;
+              if (ch.label === 'control') {
+                setupControlChannel(ch);
+              } else if (ch.label === 'transfer') {
+                setupTransferChannel(ch);
+              }
+            };
 
-              // Set up data channel listeners (laptop receives channels)
-              pc.ondatachannel = (event) => {
-                const ch = event.channel;
-                if (ch.label === 'control') {
-                  setupControlChannel(ch);
-                } else if (ch.label === 'transfer') {
-                  setupTransferChannel(ch);
+            setupConnectionListeners(pc, {
+              onConnectionStateChange: (state) => {
+                if (state === 'connected') {
+                  setConnectionState(CONNECTION_STATES.CONNECTED);
+                } else if (state === 'disconnected' || state === 'failed') {
+                  setConnectionState(CONNECTION_STATES.DISCONNECTED);
                 }
-              };
+              },
+            });
 
-              setupConnectionListeners(pc, {
-                onConnectionStateChange: (state) => {
-                  if (state === 'connected') {
-                    setConnectionState(CONNECTION_STATES.CONNECTED);
-                  } else if (state === 'disconnected' || state === 'failed') {
-                    setConnectionState(CONNECTION_STATES.DISCONNECTED);
-                  }
-                },
-              });
-
-              // Send answer back
-              signaling.send('answer', encodeSDP(answer));
-            }
-          } catch (err) {
-            handleError('Failed to process offer: ' + err.message);
+            signaling.send('answer', encodeSDP(answer));
           }
-        });
-
-        // Wait a bit, then check if we got an offer
-        // If phone opened first, the offer should come through BC
-        // If not, we'll need manual signaling
-        setTimeout(() => {
-          if (connectionState === CONNECTION_STATES.PAIRING) {
-            // No offer received via BC — show manual signaling
-            setShowSignalingModal(true);
-            setSignalingStep('paste-offer');
-          }
-        }, 3000);
-      } else {
-        // No BC support — go straight to manual
-        setShowSignalingModal(true);
-        setSignalingStep('paste-offer');
-      }
+        } catch (err) {
+          handleError('Failed to process offer: ' + err.message);
+        }
+      });
+      signaling.on('error', (message) => {
+        handleError(message instanceof Error ? message.message : String(message));
+      });
+      await signaling.connect();
     } catch (err) {
       handleError('Failed to join session: ' + err.message);
     }
-  }, [connectionState, setupControlChannel, setupTransferChannel, handleError]);
+  }, [setupControlChannel, setupTransferChannel, handleError]);
 
   /**
    * Laptop: Accept a manually pasted offer.
@@ -395,6 +373,7 @@ export default function useWebRTC(mode) {
     connectionState,
     setConnectionState,
     pairingCode,
+    setPairingCode,
     error,
     encodedOffer,
     showSignalingModal,
