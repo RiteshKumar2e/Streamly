@@ -1,27 +1,20 @@
 /**
- * Streamly — useWebRTC Hook
+ * Streamly — useWebRTC Hook (PeerJS unified connection)
  *
- * Manages WebRTC peer connection lifecycle for both phone and laptop modes.
- * Handles connection state, data channels, and control messages.
+ * Uses PeerJS cloud signaling (0.peerjs.com) for 100% client-side WebRTC.
+ * No custom backend or WebSocket server needed. Works directly on Vercel.
+ *
+ * Architecture:
+ * - Laptop generates a session ID and displays it in a QR code.
+ * - Phone scans the QR code and opens /phone?session=<id>.
+ * - A single, high-performance DataConnection is established.
+ * - Control messages (play, pause, seek, volume, state, file-info) are JSON.
+ * - Video file transfer uses the underlying RTCDataChannel for raw binary chunks.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import {
-  createOffer,
-  createAnswer,
-  acceptAnswer,
-  setupConnectionListeners,
-  cleanupConnection,
-  sendControlMessage,
-  parseControlMessage,
-} from '../services/webrtc.js';
-import {
-  WebSocketSignaling,
-  generatePairingCode,
-  normalizePairingCode,
-  encodeSDP,
-  decodeSDP,
-} from '../services/signaling.js';
+import Peer from 'peerjs';
+import { sendControlMessage, parseControlMessage } from '../services/webrtc.js';
 
 const CONNECTION_STATES = {
   IDLE: 'idle',
@@ -35,13 +28,32 @@ const CONNECTION_STATES = {
   ERROR: 'error',
 };
 
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:stun.services.mozilla.com' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+];
+
+/**
+ * Generate a unique session ID for PeerJS.
+ */
+function generateSessionId() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let id = 'stream-';
+  for (let i = 0; i < 8; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+}
+
 export default function useWebRTC(mode) {
   const [connectionState, setConnectionState] = useState(CONNECTION_STATES.IDLE);
-  const [pairingCode, setPairingCode] = useState('');
+  const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState(null);
-  const [encodedOffer, setEncodedOffer] = useState('');
-  const [showSignalingModal, setShowSignalingModal] = useState(false);
-  const [signalingStep, setSignalingStep] = useState('');
   const [playbackState, setPlaybackState] = useState({
     currentTime: 0,
     duration: 0,
@@ -50,40 +62,34 @@ export default function useWebRTC(mode) {
     muted: false,
   });
 
-  const pcRef = useRef(null);
-  const controlChannelRef = useRef(null);
-  const transferChannelRef = useRef(null);
-  const signalingRef = useRef(null);
+  const peerRef = useRef(null);
+  const connRef = useRef(null);
   const onControlMessageRef = useRef(null);
   const onTransferChannelReadyRef = useRef(null);
-
-  // Generate pairing code for phone mode
-  useEffect(() => {
-    setPairingCode(generatePairingCode());
-  }, [mode]);
+  const cleanedUpRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      cleanedUpRef.current = true;
       cleanup();
     };
   }, []);
 
   const cleanup = useCallback(() => {
-    if (signalingRef.current) {
-      signalingRef.current.disconnect();
-      signalingRef.current = null;
+    if (connRef.current) {
+      try { connRef.current.close(); } catch {}
+      connRef.current = null;
     }
-    cleanupConnection(pcRef.current, [
-      controlChannelRef.current,
-      transferChannelRef.current,
-    ]);
-    pcRef.current = null;
-    controlChannelRef.current = null;
-    transferChannelRef.current = null;
+    if (peerRef.current) {
+      try { peerRef.current.destroy(); } catch {}
+      peerRef.current = null;
+    }
   }, []);
 
   const handleError = useCallback((message) => {
+    if (cleanedUpRef.current) return;
+    console.error('Streamly connection error:', message);
     setError(message);
     setConnectionState(CONNECTION_STATES.ERROR);
   }, []);
@@ -95,299 +101,279 @@ export default function useWebRTC(mode) {
     }
   }, [connectionState]);
 
-  // Set up control channel message handling
-  const setupControlChannel = useCallback((channel) => {
-    controlChannelRef.current = channel;
-
-    channel.onmessage = (event) => {
-      const msg = parseControlMessage(event.data);
-      if (msg) {
-        if (msg.type === 'state') {
-          setPlaybackState(prev => ({
-            ...prev,
-            currentTime: msg.currentTime ?? prev.currentTime,
-            duration: msg.duration ?? prev.duration,
-            paused: msg.paused ?? prev.paused,
-            volume: msg.volume ?? prev.volume,
-            muted: msg.muted ?? prev.muted,
-          }));
-        }
-        onControlMessageRef.current?.(msg);
-      }
-    };
-
-    channel.onerror = () => {
-      handleError('Control channel error');
-    };
-  }, [handleError]);
-
-  // Set up transfer channel
-  const setupTransferChannel = useCallback((channel) => {
-    transferChannelRef.current = channel;
-    channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 256 * 1024;
-
-    channel.onopen = () => {
-      onTransferChannelReadyRef.current?.(channel);
-    };
-
-    channel.onerror = () => {
-      handleError('Transfer channel error. The connection may have been interrupted.');
-    };
-
-    if (channel.readyState === 'open') {
-      onTransferChannelReadyRef.current?.(channel);
-    }
-  }, [handleError]);
-
   /**
-   * Phone: Initiate pairing.
-   * Uses the short-lived WebSocket relay for cross-device SDP exchange.
+   * Set up incoming or outgoing PeerJS data connection.
    */
-  const startPairing = useCallback(async (codeOverride = '') => {
-    try {
-      setConnectionState(CONNECTION_STATES.PAIRING);
-      setError(null);
+  const setupConnection = useCallback((conn) => {
+    connRef.current = conn;
 
-      const code = codeOverride || pairingCode || generatePairingCode();
-      setPairingCode(code);
-      const normalizedCode = normalizePairingCode(code);
-
-      // Create WebRTC offer
-      const { pc, controlChannel, transferChannel, offer } = await createOffer();
-      pcRef.current = pc;
-
-      // Set up channels
-      setupControlChannel(controlChannel);
-      setupTransferChannel(transferChannel);
-
-      // Monitor connection state
-      setupConnectionListeners(pc, {
-        onConnectionStateChange: (state) => {
-          if (state === 'connected') {
-            setConnectionState(CONNECTION_STATES.CONNECTED);
-          } else if (state === 'disconnected' || state === 'failed') {
-            setConnectionState(CONNECTION_STATES.DISCONNECTED);
-          }
-        },
-      });
-
-      const signaling = new WebSocketSignaling(normalizedCode, 'phone');
-      signaling.on('answer', async (encodedAnswer) => {
-        try {
-          const parsed = decodeSDP(encodedAnswer);
-          if (!parsed) throw new Error('Invalid answer received.');
-          setConnectionState(CONNECTION_STATES.CONNECTING);
-          await acceptAnswer(pc, parsed.sdp);
-        } catch (err) {
-          handleError('Failed to process answer: ' + err.message);
-        }
-      });
-      signaling.on('error', (message) => {
-        handleError(message instanceof Error ? message.message : String(message));
-      });
-      signalingRef.current = signaling;
-      await signaling.connect();
-      signaling.send('offer', encodeSDP(offer));
-
-      // Also prepare manual signaling
-      setEncodedOffer(encodeSDP(offer));
-
-    } catch (err) {
-      handleError('Failed to create connection: ' + err.message);
+    // Access underlying RTCDataChannel for high-speed binary transfer
+    const rawDc = conn.dataChannel || conn._dc;
+    if (rawDc) {
+      rawDc.binaryType = 'arraybuffer';
+      try {
+        rawDc.bufferedAmountLowThreshold = 256 * 1024;
+      } catch {}
     }
-  }, [pairingCode, setupControlChannel, setupTransferChannel, handleError]);
 
-  /**
-   * Laptop: Join a pairing session.
-   */
-  const joinPairing = useCallback(async (inputCode) => {
-    try {
-      setConnectionState(CONNECTION_STATES.PAIRING);
-      setError(null);
-
-      const normalizedCode = normalizePairingCode(inputCode);
-
-      const signaling = new WebSocketSignaling(normalizedCode, 'laptop');
-      signalingRef.current = signaling;
-      signaling.on('offer', async (encodedOfferData) => {
+    // Process incoming control messages
+    conn.on('data', (data) => {
+      if (typeof data === 'string') {
         try {
-          const parsed = decodeSDP(encodedOfferData);
-          if (parsed) {
-            setConnectionState(CONNECTION_STATES.CONNECTING);
-
-            const { pc, answer } = await createAnswer(parsed.sdp);
-            pcRef.current = pc;
-
-            // Set up data channel listeners (laptop receives channels)
-            pc.ondatachannel = (event) => {
-              const ch = event.channel;
-              if (ch.label === 'control') {
-                setupControlChannel(ch);
-              } else if (ch.label === 'transfer') {
-                setupTransferChannel(ch);
+          const msg = JSON.parse(data);
+          if (msg && msg.type) {
+            if (['play', 'pause', 'seek', 'volume', 'mute', 'state', 'file-info', 'ready', 'error'].includes(msg.type)) {
+              if (msg.type === 'state') {
+                setPlaybackState(prev => ({
+                  ...prev,
+                  currentTime: msg.currentTime ?? prev.currentTime,
+                  duration: msg.duration ?? prev.duration,
+                  paused: msg.paused ?? prev.paused,
+                  volume: msg.volume ?? prev.volume,
+                  muted: msg.muted ?? prev.muted,
+                }));
               }
-            };
-
-            setupConnectionListeners(pc, {
-              onConnectionStateChange: (state) => {
-                if (state === 'connected') {
-                  setConnectionState(CONNECTION_STATES.CONNECTED);
-                } else if (state === 'disconnected' || state === 'failed') {
-                  setConnectionState(CONNECTION_STATES.DISCONNECTED);
-                }
-              },
-            });
-
-            signaling.send('answer', encodeSDP(answer));
+              onControlMessageRef.current?.(msg);
+            }
           }
-        } catch (err) {
-          handleError('Failed to process offer: ' + err.message);
+        } catch {
+          // Non-JSON string or chunk message handled by transfer listener
         }
-      });
-      signaling.on('error', (message) => {
-        handleError(message instanceof Error ? message.message : String(message));
-      });
-      await signaling.connect();
-    } catch (err) {
-      handleError('Failed to join session: ' + err.message);
-    }
-  }, [setupControlChannel, setupTransferChannel, handleError]);
-
-  /**
-   * Laptop: Accept a manually pasted offer.
-   */
-  const acceptManualOffer = useCallback(async (encodedOfferStr) => {
-    try {
-      const parsed = decodeSDP(encodedOfferStr.trim());
-      if (!parsed) {
-        handleError('Invalid connection data. Please check and try again.');
-        return;
       }
+    });
 
-      setConnectionState(CONNECTION_STATES.CONNECTING);
-
-      const { pc, answer } = await createAnswer(parsed.sdp);
-      pcRef.current = pc;
-
-      pc.ondatachannel = (event) => {
-        const ch = event.channel;
-        if (ch.label === 'control') {
-          setupControlChannel(ch);
-        } else if (ch.label === 'transfer') {
-          setupTransferChannel(ch);
-        }
-      };
-
-      setupConnectionListeners(pc, {
-        onConnectionStateChange: (state) => {
-          if (state === 'connected') {
-            setConnectionState(CONNECTION_STATES.CONNECTED);
-            setShowSignalingModal(false);
-          } else if (state === 'disconnected' || state === 'failed') {
-            setConnectionState(CONNECTION_STATES.DISCONNECTED);
-          }
-        },
-      });
-
-      setEncodedOffer(encodeSDP(answer));
-      setSignalingStep('show-answer');
-    } catch (err) {
-      handleError('Failed to process offer: ' + err.message);
-    }
-  }, [setupControlChannel, setupTransferChannel, handleError]);
-
-  /**
-   * Phone: Accept a manually pasted answer.
-   */
-  const acceptManualAnswer = useCallback(async (encodedAnswerStr) => {
-    try {
-      const parsed = decodeSDP(encodedAnswerStr.trim());
-      if (!parsed) {
-        handleError('Invalid connection data. Please check and try again.');
-        return;
+    conn.on('close', () => {
+      if (!cleanedUpRef.current) {
+        setConnectionState(CONNECTION_STATES.DISCONNECTED);
       }
+    });
 
-      setConnectionState(CONNECTION_STATES.CONNECTING);
-      await acceptAnswer(pcRef.current, parsed.sdp);
-      setShowSignalingModal(false);
-    } catch (err) {
-      handleError('Failed to process answer: ' + err.message);
-    }
-  }, [handleError]);
+    conn.on('error', (err) => {
+      console.warn('Data connection error:', err);
+    });
 
-  /**
-   * Send a control message.
-   */
-  const sendControl = useCallback((message) => {
-    return sendControlMessage(controlChannelRef.current, message);
+    // Provide transfer channel to video transfer handler
+    const transferChannel = rawDc || conn;
+    onTransferChannelReadyRef.current?.(transferChannel);
   }, []);
 
   /**
-   * Set control message handler.
+   * Laptop: Create PeerJS peer and display session in QR code.
+   */
+  const startLaptopSession = useCallback(async () => {
+    try {
+      setConnectionState(CONNECTION_STATES.PAIRING);
+      setError(null);
+
+      const id = generateSessionId();
+      setSessionId(id);
+
+      const peer = new Peer(id, {
+        debug: 1,
+        config: {
+          iceServers: ICE_SERVERS,
+          iceCandidatePoolSize: 10,
+        },
+      });
+      peerRef.current = peer;
+
+      peer.on('open', (peerId) => {
+        console.log('Laptop peer active:', peerId);
+        setSessionId(peerId);
+      });
+
+      peer.on('connection', (conn) => {
+        console.log('Incoming connection from phone');
+
+        const onOpen = () => {
+          setupConnection(conn);
+          if (!cleanedUpRef.current) {
+            setConnectionState(CONNECTION_STATES.CONNECTED);
+          }
+        };
+
+        if (conn.open) {
+          onOpen();
+        } else {
+          conn.on('open', onOpen);
+        }
+      });
+
+      peer.on('error', (err) => {
+        console.error('Laptop PeerJS error:', err);
+        if (err.type === 'unavailable-id') {
+          peer.destroy();
+          startLaptopSession();
+        } else {
+          handleError('Connection issue: ' + (err.message || err.type));
+        }
+      });
+
+      peer.on('disconnected', () => {
+        if (!cleanedUpRef.current && peer && !peer.destroyed) {
+          try { peer.reconnect(); } catch {}
+        }
+      });
+
+    } catch (err) {
+      handleError('Failed to start session: ' + err.message);
+    }
+  }, [setupConnection, handleError]);
+
+  /**
+   * Phone: Connect to laptop's PeerJS peer using session ID from QR code.
+   */
+  const joinLaptopSession = useCallback(async (laptopSessionId) => {
+    if (!laptopSessionId) return;
+
+    try {
+      setConnectionState(CONNECTION_STATES.CONNECTING);
+      setError(null);
+
+      const phoneId = 'phone-' + generateSessionId();
+
+      const peer = new Peer(phoneId, {
+        debug: 1,
+        config: {
+          iceServers: ICE_SERVERS,
+          iceCandidatePoolSize: 10,
+        },
+      });
+      peerRef.current = peer;
+
+      peer.on('open', () => {
+        console.log('Phone peer active, connecting to laptop:', laptopSessionId);
+
+        const conn = peer.connect(laptopSessionId, {
+          label: 'streamly',
+          reliable: true,
+          serialization: 'none',
+        });
+
+        const onOpen = () => {
+          console.log('Connected to laptop!');
+          setupConnection(conn);
+          if (!cleanedUpRef.current) {
+            setConnectionState(CONNECTION_STATES.CONNECTED);
+          }
+        };
+
+        if (conn.open) {
+          onOpen();
+        } else {
+          conn.on('open', onOpen);
+        }
+
+        conn.on('error', (err) => {
+          handleError('Failed to connect to laptop: ' + (err.message || 'Connection failed'));
+        });
+      });
+
+      peer.on('error', (err) => {
+        console.error('Phone PeerJS error:', err);
+        if (err.type === 'peer-unavailable') {
+          handleError('Laptop not found. Please make sure the laptop screen is open and re-scan the QR code.');
+        } else {
+          handleError('Connection error: ' + (err.message || err.type));
+        }
+      });
+
+    } catch (err) {
+      handleError('Failed to connect: ' + err.message);
+    }
+  }, [setupConnection, handleError]);
+
+  /**
+   * Send control message (JSON).
+   */
+  const sendControl = useCallback((message) => {
+    const conn = connRef.current;
+    if (!conn) return false;
+
+    try {
+      const payload = JSON.stringify(message);
+      const rawDc = conn.dataChannel || conn._dc;
+      if (rawDc && rawDc.readyState === 'open') {
+        rawDc.send(payload);
+        return true;
+      } else if (conn.open) {
+        conn.send(payload);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('sendControl error:', err);
+      return false;
+    }
+  }, []);
+
+  /**
+   * Set control message listener.
    */
   const onControlMessage = useCallback((handler) => {
     onControlMessageRef.current = handler;
   }, []);
 
   /**
-   * Set transfer channel ready handler.
+   * Set transfer channel ready listener.
    */
   const onTransferChannelReady = useCallback((handler) => {
     onTransferChannelReadyRef.current = handler;
+    const conn = connRef.current;
+    if (conn) {
+      const rawDc = conn.dataChannel || conn._dc;
+      if (rawDc && rawDc.readyState === 'open') {
+        handler(rawDc);
+      } else if (conn.open) {
+        handler(conn);
+      }
+    }
   }, []);
 
   /**
    * Get the transfer channel reference.
    */
   const getTransferChannel = useCallback(() => {
-    return transferChannelRef.current;
+    const conn = connRef.current;
+    if (!conn) return null;
+    const rawDc = conn.dataChannel || conn._dc;
+    return rawDc || conn;
   }, []);
 
   /**
-   * Disconnect and clean up.
+   * Disconnect.
    */
   const disconnect = useCallback(() => {
     cleanup();
     setConnectionState(CONNECTION_STATES.DISCONNECTED);
-    setPairingCode('');
-    setEncodedOffer('');
-    setShowSignalingModal(false);
+    setSessionId('');
   }, [cleanup]);
 
   /**
-   * Reset to idle state.
+   * Reset to idle.
    */
   const reset = useCallback(() => {
     cleanup();
     setConnectionState(CONNECTION_STATES.IDLE);
     setError(null);
-    setPairingCode(mode === 'phone' ? generatePairingCode() : '');
-    setEncodedOffer('');
-    setShowSignalingModal(false);
-    setSignalingStep('');
-  }, [cleanup, mode]);
+    setSessionId('');
+  }, [cleanup]);
 
   return {
     // State
     connectionState,
     setConnectionState,
-    pairingCode,
-    setPairingCode,
+    sessionId,
+    pairingCode: sessionId,
     error,
-    encodedOffer,
-    showSignalingModal,
-    setShowSignalingModal,
-    signalingStep,
-    setSignalingStep,
     playbackState,
     setPlaybackState,
 
     // Actions
-    startPairing,
-    joinPairing,
-    acceptManualOffer,
-    acceptManualAnswer,
+    startLaptopSession,
+    joinLaptopSession,
+    startPairing: joinLaptopSession,
+    joinPairing: joinLaptopSession,
     sendControl,
     onControlMessage,
     onTransferChannelReady,

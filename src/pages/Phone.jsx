@@ -2,27 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import useWebRTC, { CONNECTION_STATES } from '../hooks/useWebRTC.js';
 import useVideoTransfer from '../hooks/useVideoTransfer.js';
-import PairingCode from '../components/PairingCode.jsx';
 import FilePicker from '../components/FilePicker.jsx';
-import ConnectionStatus from '../components/ConnectionStatus.jsx';
 import RemoteControls from '../components/RemoteControls.jsx';
 import ProgressBar from '../components/ProgressBar.jsx';
 import ErrorMessage from '../components/ErrorMessage.jsx';
 
 export default function Phone() {
   const [searchParams] = useSearchParams();
-  const scannedCode = searchParams.get('code') || '';
+  const laptopSession = searchParams.get('session') || '';
+
   const {
     connectionState,
     setConnectionState,
-    pairingCode,
     error,
-    encodedOffer,
-    showSignalingModal,
-    setShowSignalingModal,
     playbackState,
-    startPairing,
-    acceptManualAnswer,
+    joinLaptopSession,
     sendControl,
     onControlMessage,
     onTransferChannelReady,
@@ -44,17 +38,15 @@ export default function Phone() {
     setTransferError,
   } = useVideoTransfer();
 
-  const [manualAnswerInput, setManualAnswerInput] = useState('');
-  const [copiedOffer, setCopiedOffer] = useState(false);
   const [hasStartedWatching, setHasStartedWatching] = useState(false);
   const pairingStartedRef = useRef(false);
 
-  // Initialize pairing when entering phone mode
+  // Auto-connect to laptop session from QR code
   useEffect(() => {
-    if (pairingStartedRef.current) return;
+    if (!laptopSession || pairingStartedRef.current) return;
     pairingStartedRef.current = true;
-    startPairing(scannedCode);
-  }, [scannedCode, startPairing]);
+    joinLaptopSession(laptopSession);
+  }, [laptopSession, joinLaptopSession]);
 
   // Hook up incoming control messages from laptop
   useEffect(() => {
@@ -72,14 +64,14 @@ export default function Phone() {
     if (!selectedFile) return;
     const channel = getTransferChannel();
     if (!channel || channel.readyState !== 'open') {
-      handleError('Connection to laptop is not open. Please wait or re-pair.');
+      handleError('Connection to laptop is not open. Please wait or re-scan the QR code.');
       return;
     }
 
     setHasStartedWatching(true);
     setConnectionState(CONNECTION_STATES.TRANSFERRING);
 
-    // Notify laptop of file metadata over control channel as well
+    // Notify laptop of file metadata over control channel
     sendControl({
       type: 'file-info',
       name: selectedFile.name,
@@ -99,17 +91,9 @@ export default function Phone() {
   }, [isTransferComplete, setConnectionState]);
 
   // Remote control action handlers
-  const handlePlay = () => {
-    sendControl({ type: 'play' });
-  };
-
-  const handlePause = () => {
-    sendControl({ type: 'pause' });
-  };
-
-  const handleSeek = (time) => {
-    sendControl({ type: 'seek', time });
-  };
+  const handlePlay = () => sendControl({ type: 'play' });
+  const handlePause = () => sendControl({ type: 'pause' });
+  const handleSeek = (time) => sendControl({ type: 'seek', time });
 
   const handleSeekRelative = (seconds) => {
     const current = playbackState.currentTime || 0;
@@ -118,13 +102,8 @@ export default function Phone() {
     sendControl({ type: 'seek', time: nextTime });
   };
 
-  const handleVolumeChange = (value) => {
-    sendControl({ type: 'volume', value });
-  };
-
-  const handleMuteToggle = () => {
-    sendControl({ type: 'mute', value: !playbackState.muted });
-  };
+  const handleVolumeChange = (value) => sendControl({ type: 'volume', value });
+  const handleMuteToggle = () => sendControl({ type: 'mute', value: !playbackState.muted });
 
   const handleDisconnect = () => {
     cleanupTransfer();
@@ -132,24 +111,6 @@ export default function Phone() {
     setHasStartedWatching(false);
   };
 
-  const copyOfferToClipboard = async () => {
-    if (!encodedOffer) return;
-    try {
-      await navigator.clipboard.writeText(encodedOffer);
-      setCopiedOffer(true);
-      setTimeout(() => setCopiedOffer(false), 2500);
-    } catch {
-      // Fallback
-      setCopiedOffer(true);
-    }
-  };
-
-  const submitManualAnswer = () => {
-    if (!manualAnswerInput.trim()) return;
-    acceptManualAnswer(manualAnswerInput);
-  };
-
-  // Generate QR pairing link
   const isConnected = connectionState === CONNECTION_STATES.CONNECTED ||
                       connectionState === CONNECTION_STATES.READY ||
                       connectionState === CONNECTION_STATES.PLAYING ||
@@ -160,32 +121,46 @@ export default function Phone() {
       <div className="mode-header">
         <h1>Streamly</h1>
         {!isConnected && (
-          <p>
-            Connect to the big screen.
-          </p>
+          <p>Connect to the big screen.</p>
         )}
       </div>
 
       <div className="mode-content">
         {(error || transferError) && (
-          <ErrorMessage
-            message={error || transferError}
-            onDismiss={() => {
-              clearError();
-              setTransferError(null);
-            }}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', width: '100%' }}>
+            <ErrorMessage
+              message={error || transferError}
+              onDismiss={() => {
+                clearError();
+                setTransferError(null);
+              }}
+            />
+            {laptopSession && !isConnected && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  clearError();
+                  setTransferError(null);
+                  pairingStartedRef.current = false;
+                  joinLaptopSession(laptopSession);
+                }}
+                id="phone-retry-btn"
+              >
+                🔄 Retry Connection
+              </button>
+            )}
+          </div>
         )}
 
-        {/* State 1: Pairing (Not yet connected) */}
+        {/* State 1: Connecting (auto from QR scan) */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
             <div className="waiting-text" style={{ padding: '40px 0', flexDirection: 'column', gap: 20 }}>
               <div className="waiting-spinner" style={{ width: 48, height: 48 }} />
               <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {scannedCode ? 'Connecting to laptop...' : 'Waiting for connection...'}
+                {laptopSession ? 'Connecting to laptop...' : 'Waiting for connection...'}
               </span>
-              {!scannedCode && (
+              {!laptopSession && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: 300, textAlign: 'center' }}>
                   Please scan the QR code displayed on your laptop screen to connect automatically.
                 </p>
@@ -237,7 +212,6 @@ export default function Phone() {
         {/* State 3: Transferring video */}
         {isConnected && hasStartedWatching && isTransferring && (
           <div className="pairing-section animate-fade-in-up">
-            <ConnectionStatus state="transferring" />
             <div style={{ textAlign: 'center', margin: '12px 0' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                 Sending {selectedFile?.name}
@@ -269,60 +243,6 @@ export default function Phone() {
           />
         )}
       </div>
-
-      {/* Manual Signaling Modal for true cross-browser / cross-device WebRTC */}
-      {showSignalingModal && (
-        <div className="modal-overlay" onClick={() => setShowSignalingModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Serverless WebRTC Pairing</h2>
-            <p>
-              Streamly operates strictly client-side without any server backend.
-              To pair across different devices on your Wi-Fi:
-            </p>
-
-            <label htmlFor="phone-offer-copy">Step 1: Copy Phone's Offer to Laptop</label>
-            <textarea
-              id="phone-offer-copy"
-              readOnly
-              value={encodedOffer || 'Generating offer...'}
-            />
-            <button
-              className={`copy-btn ${copiedOffer ? 'copied' : ''}`}
-              onClick={copyOfferToClipboard}
-              id="copy-offer-btn"
-            >
-              {copiedOffer ? '✓ Copied to Clipboard!' : '📋 Copy Offer'}
-            </button>
-
-            <div style={{ marginTop: 20 }}>
-              <label htmlFor="phone-answer-paste">Step 2: Paste Laptop's Answer Here</label>
-              <textarea
-                id="phone-answer-paste"
-                placeholder="Paste the answer string generated on your laptop here..."
-                value={manualAnswerInput}
-                onChange={(e) => setManualAnswerInput(e.target.value)}
-              />
-            </div>
-
-            <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                onClick={submitManualAnswer}
-                disabled={!manualAnswerInput.trim()}
-                id="connect-manual-answer-btn"
-              >
-                Complete Connection
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowSignalingModal(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

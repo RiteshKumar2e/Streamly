@@ -42,6 +42,8 @@ export function sendFile(file, channel, callbacks = {}) {
     return { cancel: () => {} };
   }
 
+  const targetChannel = channel?.dataChannel || channel;
+
   // Send metadata first
   const meta = {
     type: 'meta',
@@ -53,7 +55,7 @@ export function sendFile(file, channel, callbacks = {}) {
   };
 
   try {
-    channel.send(JSON.stringify(meta));
+    targetChannel.send(JSON.stringify(meta));
   } catch (err) {
     onError?.(new Error('Failed to send file metadata: ' + err.message));
     return { cancel: () => {} };
@@ -68,7 +70,7 @@ export function sendFile(file, channel, callbacks = {}) {
     if (offset >= file.size) {
       // Transfer complete
       try {
-        channel.send(JSON.stringify({ type: 'done' }));
+        targetChannel.send(JSON.stringify({ type: 'done' }));
       } catch {
         // Ignore
       }
@@ -77,16 +79,22 @@ export function sendFile(file, channel, callbacks = {}) {
     }
 
     // Backpressure: wait if buffer is too full
-    if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+    if (targetChannel.bufferedAmount && targetChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
       const onBufferDrain = () => {
-        if (channel.bufferedAmount <= BACKPRESSURE_RESUME) {
-          channel.removeEventListener('bufferedamountlow', onBufferDrain);
+        if (targetChannel.bufferedAmount <= BACKPRESSURE_RESUME) {
+          if (typeof targetChannel.removeEventListener === 'function') {
+            targetChannel.removeEventListener('bufferedamountlow', onBufferDrain);
+          }
           readNextChunk();
         }
       };
-      channel.bufferedAmountLowThreshold = BACKPRESSURE_RESUME;
-      channel.addEventListener('bufferedamountlow', onBufferDrain);
-      return;
+      if (typeof targetChannel.addEventListener === 'function') {
+        try {
+          targetChannel.bufferedAmountLowThreshold = BACKPRESSURE_RESUME;
+          targetChannel.addEventListener('bufferedamountlow', onBufferDrain);
+          return;
+        } catch {}
+      }
     }
 
     const end = Math.min(offset + chunkSize, file.size);
@@ -98,7 +106,7 @@ export function sendFile(file, channel, callbacks = {}) {
     if (cancelled) return;
 
     try {
-      channel.send(e.target.result);
+      targetChannel.send(e.target.result);
       chunkIndex++;
       offset += e.target.result.byteLength;
 
@@ -128,7 +136,7 @@ export function sendFile(file, channel, callbacks = {}) {
     cancel: () => {
       cancelled = true;
       try {
-        channel.send(JSON.stringify({ type: 'cancel' }));
+        targetChannel.send(JSON.stringify({ type: 'cancel' }));
       } catch {
         // Ignore
       }
@@ -139,12 +147,14 @@ export function sendFile(file, channel, callbacks = {}) {
 /**
  * Receive a file over a DataChannel.
  *
- * @param {RTCDataChannel} channel - The transfer data channel
+ * @param {RTCDataChannel|object} channel - The transfer data channel or Peer connection
  * @param {object} callbacks - { onMeta, onProgress, onComplete, onError }
  * @returns {{ cancel: () => void }} - Controller to cancel reception
  */
 export function receiveFile(channel, callbacks = {}) {
   const { onMeta, onProgress, onComplete, onError } = callbacks;
+
+  const targetChannel = channel?.dataChannel || channel;
 
   let meta = null;
   let receivedChunks = [];
@@ -155,7 +165,8 @@ export function receiveFile(channel, callbacks = {}) {
   const handleMessage = (event) => {
     if (cancelled) return;
 
-    const { data } = event;
+    // Normalize data from event or direct data emit
+    const data = event && event.data !== undefined ? event.data : event;
 
     // Check if it's a string message (JSON)
     if (typeof data === 'string') {
@@ -240,12 +251,24 @@ export function receiveFile(channel, callbacks = {}) {
     }
   };
 
-  channel.addEventListener('message', handleMessage);
+  const onData = (data) => handleMessage({ data });
+
+  if (targetChannel && typeof targetChannel.addEventListener === 'function') {
+    targetChannel.addEventListener('message', handleMessage);
+  }
+  if (channel && typeof channel.on === 'function' && channel !== targetChannel) {
+    channel.on('data', onData);
+  }
 
   return {
     cancel: () => {
       cancelled = true;
-      channel.removeEventListener('message', handleMessage);
+      if (targetChannel && typeof targetChannel.removeEventListener === 'function') {
+        targetChannel.removeEventListener('message', handleMessage);
+      }
+      if (channel && typeof channel.off === 'function') {
+        channel.off('data', onData);
+      }
       receivedChunks = [];
       receivedBytes = 0;
       meta = null;
