@@ -183,6 +183,13 @@ The server starts at `http://0.0.0.0:5173`. Vite will print your local network a
 6. Select your movie on Android and tap **Start Watching**. Wait for the transfer to finish; the laptop then creates a local Blob URL and begins playback.
 7. Use the phone as the remote. If the connection is interrupted, refresh both pages and scan a newly generated QR code.
 
-### Important deployment note
+### Important deployment note (e.g. Vercel)
 
-For Android Chrome to load the app from a Windows laptop over Wi-Fi, the development server (port 5173) and signaling relay (port 8787) must be reachable on the LAN and the Windows firewall must allow both ports. Production deployments should use HTTPS/WSS. Streamly intentionally does not add a database, cloud upload, or hidden file access.
+If you are deploying the frontend to a serverless platform like **Vercel** or **Netlify**:
+1. These platforms do not support hosting a continuous WebSocket server.
+2. You must host the signaling server (`server/signaling-server.js`) on a service that supports WebSockets (like Render, Railway, or Heroku).
+3. Once your signaling server is deployed (e.g., `wss://your-signaling-server.onrender.com`), add an environment variable to your Vercel project:
+   - Key: `VITE_SIGNALING_URL`
+   - Value: `wss://your-signaling-server.onrender.com`
+
+For local development over Wi-Fi, the development server (port 5173) and signaling relay (port 8787) must be reachable on the LAN and the Windows firewall must allow both ports. Streamly intentionally does not add a database, cloud upload, or hidden file access.

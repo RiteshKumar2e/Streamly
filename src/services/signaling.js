@@ -138,55 +138,61 @@ export class WebSocketSignaling {
   }
 
   connect() {
-    return new Promise((resolve, reject) => {
-      if (!window.WebSocket) {
-        reject(new Error('WebSocket is not supported by this browser.'));
-        return;
-      }
-
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(`${protocol}//${window.location.hostname}:8787`);
-      this.socket = socket;
-
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'join', room: this.code, role: this.role }));
-        resolve();
-      };
-      socket.onerror = () => reject(new Error('Unable to reach the Streamly signaling server.'));
-      socket.onclose = () => this.emit('close');
-      socket.onmessage = (event) => {
+    return new Promise((resolve) => {
+      this.lastTimestamp = 0;
+      this.pollInterval = setInterval(async () => {
         try {
-          const message = JSON.parse(event.data);
-          if (message.type && message.type !== 'joined') {
-            this.emit(message.type, message.data);
+          const res = await fetch(`/api/signaling?room=${this.code}&since=${this.lastTimestamp}`);
+          if (res.ok) {
+            const messages = await res.json();
+            messages.forEach(msg => {
+              if (msg.timestamp > this.lastTimestamp) {
+                this.lastTimestamp = msg.timestamp;
+              }
+              // Ignore our own messages (based on role)
+              if (msg.role !== this.role) {
+                if (msg.type && msg.type !== 'joined') {
+                  this.emit(msg.type, msg.data);
+                }
+              }
+            });
           }
-        } catch {
-          this.emit('error', new Error('The signaling server sent invalid data.'));
+        } catch (e) {
+          // Ignore network errors during polling
         }
-      };
+      }, 2000); // Poll every 2 seconds
+
+      resolve();
     });
   }
 
-  on(type, callback) {
-    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
-    this.listeners.get(type).add(callback);
-  }
-
-  emit(type, data) {
-    this.listeners.get(type)?.forEach((callback) => callback(data));
-  }
-
   send(type, data) {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({ type, room: this.code, data }));
-      return true;
+    fetch(`/api/signaling?room=${this.code}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, data, role: this.role })
+    }).catch(() => {});
+  }
+
+  on(event, callback) {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, []);
     }
-    return false;
+    this.listeners.get(event).push(callback);
+  }
+
+  emit(event, data) {
+    const callbacks = this.listeners.get(event);
+    if (callbacks) {
+      callbacks.forEach(cb => cb(data));
+    }
   }
 
   disconnect() {
-    this.socket?.close();
-    this.socket = null;
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
     this.listeners.clear();
   }
 }
