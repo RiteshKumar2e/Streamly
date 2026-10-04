@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+Disallow: /phone
+Disallow: /laptop
+
+Sitemap: https://streamly.app/sitemap.xml
