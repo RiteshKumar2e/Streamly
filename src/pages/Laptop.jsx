@@ -79,10 +79,25 @@ export default function Laptop() {
 
   const hasVideo = !!videoUrl;
 
-  // QR code URL that phone will open
-  const phonePairingUrl = typeof window !== 'undefined' && sessionId
-    ? `${window.location.origin}/phone?session=${sessionId}`
-    : '';
+  const isLocalhost = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+
+  // In production use window.location.origin. In local dev, use production domain so phone can load the page
+  const pairingBaseUrl = isLocalhost
+    ? 'https://streamly-psi-six.vercel.app'
+    : (typeof window !== 'undefined' ? window.location.origin : '');
+
+  const phonePairingUrl = sessionId ? `${pairingBaseUrl}/phone?session=${sessionId}` : '';
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleCopyLink = () => {
+    if (!phonePairingUrl) return;
+    navigator.clipboard.writeText(phonePairingUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
 
   return (
     <div className="mode-page" id="laptop-page">
@@ -131,7 +146,7 @@ export default function Laptop() {
             ) : (
               <div style={{ textAlign: 'center', padding: '40px 0' }}>
                 <div className="waiting-spinner" style={{ width: 48, height: 48, margin: '0 auto 16px' }} />
-                <p style={{ color: 'var(--text-secondary)' }}>Setting up session...</p>
+                <p style={{ color: 'var(--text-secondary)' }}>Setting up pairing session...</p>
               </div>
             )}
             
@@ -144,15 +159,23 @@ export default function Laptop() {
               </p>
             </div>
 
-            {connectionState === CONNECTION_STATES.CONNECTING && (
-              <div style={{ marginTop: 20 }}>
-                <ConnectionStatus state="connecting" />
+            {phonePairingUrl && (
+              <div style={{ marginTop: 16 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={handleCopyLink}
+                  style={{ fontSize: '0.85rem' }}
+                >
+                  {copiedLink ? '✓ Link Copied!' : '🔗 Copy Pairing Link'}
+                </button>
               </div>
             )}
 
-            <div style={{ marginTop: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               <div className="waiting-spinner" />
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Waiting for phone...</span>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                Waiting for phone...
+              </span>
             </div>
           </div>
         )}

@@ -3,18 +3,10 @@
  *
  * Uses PeerJS cloud signaling (0.peerjs.com) for 100% client-side WebRTC.
  * No custom backend or WebSocket server needed. Works directly on Vercel.
- *
- * Architecture:
- * - Laptop generates a session ID and displays it in a QR code.
- * - Phone scans the QR code and opens /phone?session=<id>.
- * - A single, high-performance DataConnection is established.
- * - Control messages (play, pause, seek, volume, state, file-info) are JSON.
- * - Video file transfer uses the underlying RTCDataChannel for raw binary chunks.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Peer from 'peerjs';
-import { sendControlMessage, parseControlMessage } from '../services/webrtc.js';
 
 const CONNECTION_STATES = {
   IDLE: 'idle',
@@ -28,19 +20,13 @@ const CONNECTION_STATES = {
   ERROR: 'error',
 };
 
+// Fast and reliable Google STUN servers
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-  { urls: 'stun:stun.services.mozilla.com' },
-  { urls: 'stun:global.stun.twilio.com:3478' },
 ];
 
-/**
- * Generate a unique session ID for PeerJS.
- */
 function generateSessionId() {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   let id = 'stream-';
@@ -53,6 +39,7 @@ function generateSessionId() {
 export default function useWebRTC(mode) {
   const [connectionState, setConnectionState] = useState(CONNECTION_STATES.IDLE);
   const [sessionId, setSessionId] = useState('');
+  const [connectionStatusText, setConnectionStatusText] = useState('');
   const [error, setError] = useState(null);
   const [playbackState, setPlaybackState] = useState({
     currentTime: 0,
@@ -87,7 +74,7 @@ export default function useWebRTC(mode) {
     }
   }, []);
 
-  // Cleanup on unmount (delayed to survive React 18 StrictMode double-mount)
+  // Cleanup on unmount (delayed to survive React 18 StrictMode)
   useEffect(() => {
     cancelPendingCleanup();
     return () => {
@@ -103,6 +90,7 @@ export default function useWebRTC(mode) {
     console.error('Streamly connection error:', message);
     setError(message);
     setConnectionState(CONNECTION_STATES.ERROR);
+    setConnectionStatusText('');
   }, []);
 
   const clearError = useCallback(() => {
@@ -127,12 +115,24 @@ export default function useWebRTC(mode) {
       } catch {}
     }
 
-    // Process incoming control messages
+    // Process incoming messages
     conn.on('data', (data) => {
       if (typeof data === 'string') {
         try {
           const msg = JSON.parse(data);
           if (msg && msg.type) {
+            // Handshake
+            if (msg.type === 'handshake-ping') {
+              conn.send(JSON.stringify({ type: 'handshake-pong' }));
+              setConnectionState(CONNECTION_STATES.CONNECTED);
+              return;
+            }
+            if (msg.type === 'handshake-pong') {
+              setConnectionState(CONNECTION_STATES.CONNECTED);
+              return;
+            }
+
+            // Remote control & playback
             if (['play', 'pause', 'seek', 'volume', 'mute', 'state', 'file-info', 'ready', 'error'].includes(msg.type)) {
               if (msg.type === 'state') {
                 setPlaybackState(prev => ({
@@ -147,9 +147,7 @@ export default function useWebRTC(mode) {
               onControlMessageRef.current?.(msg);
             }
           }
-        } catch {
-          // Non-JSON string or chunk message handled by transfer listener
-        }
+        } catch {}
       }
     });
 
@@ -169,45 +167,53 @@ export default function useWebRTC(mode) {
   }, []);
 
   /**
-   * Laptop: Create PeerJS peer and display session in QR code.
+   * Laptop: Create PeerJS peer and display session in QR code once active.
    */
   const startLaptopSession = useCallback(async () => {
     cancelPendingCleanup();
     cleanedUpRef.current = false;
 
-    // If already active peer exists, don't recreate
-    if (peerRef.current && !peerRef.current.destroyed && !peerRef.current.disconnected) {
+    // If active peer already registered, keep it
+    if (peerRef.current && !peerRef.current.destroyed && !peerRef.current.disconnected && sessionId) {
       return;
     }
 
     try {
       setConnectionState(CONNECTION_STATES.PAIRING);
+      setConnectionStatusText('Initializing session...');
       setError(null);
 
       const id = generateSessionId();
-      setSessionId(id);
 
       const peer = new Peer(id, {
         debug: 1,
         config: {
           iceServers: ICE_SERVERS,
-          iceCandidatePoolSize: 10,
         },
       });
       peerRef.current = peer;
 
       peer.on('open', (peerId) => {
-        console.log('Laptop peer active:', peerId);
+        console.log('Laptop peer registered on cloud:', peerId);
+        // Only set session ID once peer is confirmed online by server
         setSessionId(peerId);
+        setConnectionStatusText('Ready for phone connection');
       });
 
       peer.on('connection', (conn) => {
-        console.log('Incoming connection from phone');
+        console.log('Incoming connection from phone detected');
+        setConnectionStatusText('Connecting to phone...');
 
         const onOpen = () => {
+          console.log('Laptop connection opened!');
           setupConnection(conn);
+          // Send handshake
+          try {
+            conn.send(JSON.stringify({ type: 'handshake-ping' }));
+          } catch {}
           if (!cleanedUpRef.current) {
             setConnectionState(CONNECTION_STATES.CONNECTED);
+            setConnectionStatusText('Phone connected!');
           }
         };
 
@@ -224,7 +230,7 @@ export default function useWebRTC(mode) {
           peer.destroy();
           startLaptopSession();
         } else {
-          handleError('Connection issue: ' + (err.message || err.type));
+          handleError('Signaling error: ' + (err.message || err.type));
         }
       });
 
@@ -237,7 +243,7 @@ export default function useWebRTC(mode) {
     } catch (err) {
       handleError('Failed to start session: ' + err.message);
     }
-  }, [cancelPendingCleanup, setupConnection, handleError]);
+  }, [cancelPendingCleanup, setupConnection, handleError, sessionId]);
 
   /**
    * Phone: Connect to laptop's PeerJS peer using session ID from QR code.
@@ -248,13 +254,15 @@ export default function useWebRTC(mode) {
     cancelPendingCleanup();
     cleanedUpRef.current = false;
 
-    // If already connected or connecting to this session, don't recreate
-    if (peerRef.current && !peerRef.current.destroyed) {
-      return;
+    // Clean up previous peer if any
+    if (peerRef.current) {
+      try { peerRef.current.destroy(); } catch {}
+      peerRef.current = null;
     }
 
     try {
       setConnectionState(CONNECTION_STATES.CONNECTING);
+      setConnectionStatusText('Connecting to pairing cloud...');
       setError(null);
 
       const phoneId = 'phone-' + generateSessionId();
@@ -263,13 +271,13 @@ export default function useWebRTC(mode) {
         debug: 1,
         config: {
           iceServers: ICE_SERVERS,
-          iceCandidatePoolSize: 10,
         },
       });
       peerRef.current = peer;
 
       peer.on('open', () => {
-        console.log('Phone peer active, connecting to laptop:', laptopSessionId);
+        console.log('Phone registered on cloud, connecting to laptop:', laptopSessionId);
+        setConnectionStatusText('Connecting to laptop...');
 
         const conn = peer.connect(laptopSessionId, {
           label: 'streamly',
@@ -278,10 +286,15 @@ export default function useWebRTC(mode) {
         });
 
         const onOpen = () => {
-          console.log('Connected to laptop!');
+          console.log('Phone connection opened!');
           setupConnection(conn);
+          // Send handshake ping
+          try {
+            conn.send(JSON.stringify({ type: 'handshake-ping' }));
+          } catch {}
           if (!cleanedUpRef.current) {
             setConnectionState(CONNECTION_STATES.CONNECTED);
+            setConnectionStatusText('Connected to laptop!');
           }
         };
 
@@ -292,8 +305,15 @@ export default function useWebRTC(mode) {
         }
 
         conn.on('error', (err) => {
-          handleError('Failed to connect to laptop: ' + (err.message || 'Connection failed'));
+          handleError('Connection failed: ' + (err.message || 'Unable to connect to laptop'));
         });
+
+        // 12-second safety timeout
+        setTimeout(() => {
+          if (!conn.open && connectionState === CONNECTION_STATES.CONNECTING) {
+            setConnectionStatusText('Taking longer than usual. Please check your Wi-Fi or tap Retry.');
+          }
+        }, 12000);
       });
 
       peer.on('error', (err) => {
@@ -301,14 +321,14 @@ export default function useWebRTC(mode) {
         if (err.type === 'peer-unavailable') {
           handleError('Laptop not found. Please make sure the laptop screen is open and re-scan the QR code.');
         } else {
-          handleError('Connection error: ' + (err.message || err.type));
+          handleError('Connection issue: ' + (err.message || err.type));
         }
       });
 
     } catch (err) {
       handleError('Failed to connect: ' + err.message);
     }
-  }, [cancelPendingCleanup, setupConnection, handleError]);
+  }, [cancelPendingCleanup, setupConnection, handleError, connectionState]);
 
   /**
    * Send control message (JSON).
@@ -375,6 +395,7 @@ export default function useWebRTC(mode) {
     cleanedUpRef.current = true;
     cleanup();
     setConnectionState(CONNECTION_STATES.DISCONNECTED);
+    setConnectionStatusText('');
     setSessionId('');
   }, [cancelPendingCleanup, cleanup]);
 
@@ -386,6 +407,7 @@ export default function useWebRTC(mode) {
     cleanedUpRef.current = true;
     cleanup();
     setConnectionState(CONNECTION_STATES.IDLE);
+    setConnectionStatusText('');
     setError(null);
     setSessionId('');
   }, [cancelPendingCleanup, cleanup]);
@@ -394,6 +416,7 @@ export default function useWebRTC(mode) {
     // State
     connectionState,
     setConnectionState,
+    connectionStatusText,
     sessionId,
     pairingCode: sessionId,
     error,

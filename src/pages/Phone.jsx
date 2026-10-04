@@ -14,6 +14,7 @@ export default function Phone() {
   const {
     connectionState,
     setConnectionState,
+    connectionStatusText,
     error,
     playbackState,
     joinLaptopSession,
@@ -138,7 +139,6 @@ export default function Phone() {
                 onClick={() => {
                   clearError();
                   setTransferError(null);
-                  pairingStartedRef.current = false;
                   joinLaptopSession(laptopSession);
                 }}
                 id="phone-retry-btn"
@@ -152,11 +152,29 @@ export default function Phone() {
         {/* State 1: Connecting (auto from QR scan) */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
-            <div className="waiting-text" style={{ padding: '40px 0', flexDirection: 'column', gap: 20 }}>
+            <div className="waiting-text" style={{ padding: '40px 0', flexDirection: 'column', gap: 16 }}>
               <div className="waiting-spinner" style={{ width: 48, height: 48 }} />
               <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {laptopSession ? 'Connecting to laptop...' : 'Waiting for connection...'}
+                {connectionStatusText || (laptopSession ? 'Connecting to laptop...' : 'Waiting for connection...')}
               </span>
+              {laptopSession && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                    Session: {laptopSession}
+                  </p>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      clearError();
+                      setTransferError(null);
+                      joinLaptopSession(laptopSession);
+                    }}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    🔄 Re-connect
+                  </button>
+                </div>
+              )}
               {!laptopSession && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: 300, textAlign: 'center' }}>
                   Please scan the QR code displayed on your laptop screen to connect automatically.
