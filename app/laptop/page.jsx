@@ -8,8 +8,44 @@ import VideoPlayer from '../../src/components/VideoPlayer.jsx';
 import ProgressBar from '../../src/components/ProgressBar.jsx';
 import ErrorMessage from '../../src/components/ErrorMessage.jsx';
 import QRCode from '../../src/components/QRCode.jsx';
+import LocalLaptop from '../../src/components/LocalLaptop.jsx';
 
+/**
+ * Local mode when this page is served by Streamly running on the laptop itself
+ * (npm run dev / npm start): the phone talks straight to this laptop over the
+ * hotspot / Wi-Fi. Online mode (WebRTC + internet signaling) on the deployed site.
+ */
 export default function LaptopPage() {
+  const [mode, setMode] = useState(null); // null = detecting
+  const [addresses, setAddresses] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/local/info', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((info) => {
+        if (cancelled) return;
+        if (info?.local && info.addresses?.length) {
+          setAddresses(info.addresses);
+          setMode('local');
+        } else {
+          setMode('online');
+        }
+      })
+      .catch(() => { if (!cancelled) setMode('online'); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (mode === 'local') return <LocalLaptop addresses={addresses} />;
+  if (mode === 'online') return <OnlineLaptop />;
+  return (
+    <div className="mode-page" id="laptop-page">
+      <div className="waiting-spinner" style={{ width: 48, height: 48, margin: '80px auto' }} />
+    </div>
+  );
+}
+
+function OnlineLaptop() {
   const {
     connectionState,
     sessionId,

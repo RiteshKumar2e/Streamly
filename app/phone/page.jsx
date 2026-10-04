@@ -8,10 +8,20 @@ import FilePicker from '../../src/components/FilePicker.jsx';
 import RemoteControls from '../../src/components/RemoteControls.jsx';
 import ProgressBar from '../../src/components/ProgressBar.jsx';
 import ErrorMessage from '../../src/components/ErrorMessage.jsx';
+import LocalPhone from '../../src/components/LocalPhone.jsx';
 
 function PhoneContent() {
   const searchParams = useSearchParams();
   const laptopSession = searchParams.get('session') || '';
+
+  // QR from a laptop running Streamly locally (hotspot / same Wi-Fi)
+  if (searchParams.get('local') === '1' && laptopSession) {
+    return <LocalPhone session={laptopSession} />;
+  }
+  return <OnlinePhone laptopSession={laptopSession} />;
+}
+
+function OnlinePhone({ laptopSession }) {
 
   const {
     connectionState,
