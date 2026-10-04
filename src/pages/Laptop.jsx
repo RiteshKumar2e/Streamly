@@ -146,15 +146,11 @@ export default function Laptop() {
     <div className="mode-page" id="laptop-page">
       {!hasVideo && (
         <div className="mode-header">
-          <div className="mode-badge">
-            <span className="mode-badge-icon">💻</span>
-            <span>Laptop Mode</span>
-          </div>
-          <h1>{isConnected ? 'Phone Connected' : 'Connect Your Phone'}</h1>
-          <p>
+          <h1>{isConnected ? '✓ Phone Connected' : 'Streamly'}</h1>
+          <p style={isConnected ? {} : { fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)', maxWidth: 400, margin: '0 auto' }}>
             {isConnected
-              ? 'Waiting for a movie to be selected on your phone...'
-              : 'Scan this QR code with your phone to connect automatically.'}
+              ? 'Choose a movie on your phone.'
+              : 'Connect your phone to watch on the big screen.'}
           </p>
         </div>
       )}
@@ -173,67 +169,30 @@ export default function Laptop() {
         {/* State 1: Enter Pairing Code */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
-            <QRCode value={phonePairingUrl} size={220} />
-            <PairingCode code={pairingCode || '------'} label="Scan to Connect" />
-            <p className="input-validation-hint">
-              Open your phone camera, scan the QR code, then choose Streamly.
-            </p>
-            <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%' }}>
-              <div className="pairing-code-label">Enter 6-Digit Pairing Code</div>
-              <input
-                type="text"
-                className="pairing-code-input"
-                placeholder="• • •   • • •"
-                value={inputCode}
-                onChange={handleInputChange}
-                maxLength={7}
-                autoFocus
-                disabled={connectionState === CONNECTION_STATES.CONNECTING}
-                aria-label="6-Digit Pairing Code"
-                id="pairing-code-input"
-              />
-
-              {inputCode && inputCode.replace(/\s/g, '').length < 6 && (
-                <span className="input-validation-hint">Enter all 6 digits shown on your phone</span>
-              )}
-
-              <button
-                type="submit"
-                className="btn btn-primary btn-lg btn-block"
-                disabled={!validateCode(inputCode) || connectionState === CONNECTION_STATES.CONNECTING}
-                id="connect-laptop-btn"
-              >
-                {connectionState === CONNECTION_STATES.CONNECTING ? 'Connecting...' : 'Connect Phone'}
-              </button>
-            </form>
-
-            <div className="pairing-or">OR</div>
-
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Scan the QR code displayed on your phone with your camera
+            <QRCode value={phonePairingUrl} size={250} />
+            
+            <div style={{ textAlign: 'center', marginTop: 24 }}>
+              <p style={{ fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: 8 }}>
+                Scan with your phone camera
               </p>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setShowSignalingModal(true)}
-                id="laptop-manual-signal-btn"
-              >
-                ⚙️ Direct Signaling (Cross-Device)
-              </button>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                No PIN. No account. Just scan and connect.
+              </p>
             </div>
+            
+            {/* Removed manual PIN entry form */}
+
+            {connectionState === CONNECTION_STATES.CONNECTING && (
+              <div style={{ marginTop: 20 }}>
+                <ConnectionStatus state="connecting" />
+              </div>
+            )}
           </div>
         )}
 
         {/* State 2: Connected, waiting for movie (Empty State) */}
         {isConnected && !isTransferring && !hasVideo && (
-          <div className="waiting-state animate-fade-in">
-            <div className="success-banner animate-fade-in">
-              <span className="success-icon">✓</span>
-              <span>Phone paired successfully!</span>
-            </div>
-
-            <ConnectionStatus state="connected" />
+          <div className="waiting-state animate-fade-in" style={{ padding: '60px 20px' }}>
             <div className="waiting-icon">🎬</div>
             <h2>Ready to Receive Movie</h2>
             <p>
@@ -241,21 +200,6 @@ export default function Laptop() {
                 ? `Preparing to stream ${incomingFileInfo.name}...`
                 : 'Select any video file on your phone to start streaming directly to this screen.'}
             </p>
-
-            <div className="empty-state-steps">
-              <div className="empty-step">
-                <span className="empty-step-num">1</span>
-                <span>Open Streamly tab on your phone</span>
-              </div>
-              <div className="empty-step">
-                <span className="empty-step-num">2</span>
-                <span>Tap "Choose your movie"</span>
-              </div>
-              <div className="empty-step">
-                <span className="empty-step-num">3</span>
-                <span>Tap "Start Watching"</span>
-              </div>
-            </div>
           </div>
         )}
 

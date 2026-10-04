@@ -158,16 +158,12 @@ export default function Phone() {
   return (
     <div className="mode-page" id="phone-page">
       <div className="mode-header">
-        <div className="mode-badge">
-          <span className="mode-badge-icon">📱</span>
-          <span>Phone Mode</span>
-        </div>
-        <h1>{isConnected ? 'Laptop Connected' : 'Connect to Big Screen'}</h1>
-        <p>
-          {isConnected
-            ? 'Your phone is paired and acting as the remote.'
-            : 'Point your laptop browser to Streamly to pair.'}
-        </p>
+        <h1>Streamly</h1>
+        {!isConnected && (
+          <p>
+            Connect to the big screen.
+          </p>
+        )}
       </div>
 
       <div className="mode-content">
@@ -184,21 +180,16 @@ export default function Phone() {
         {/* State 1: Pairing (Not yet connected) */}
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
-            <PairingCode code={pairingCode || '------'} label="Pairing Code" />
-
-            <div className="waiting-text">
-              <div className="waiting-spinner" />
-              <span>Waiting for laptop...</span>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setShowSignalingModal(true)}
-                id="phone-manual-signal-btn"
-              >
-                ⚙️ Direct Signaling (Cross-Device)
-              </button>
+            <div className="waiting-text" style={{ padding: '40px 0', flexDirection: 'column', gap: 20 }}>
+              <div className="waiting-spinner" style={{ width: 48, height: 48 }} />
+              <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {scannedCode ? 'Connecting to laptop...' : 'Waiting for connection...'}
+              </span>
+              {!scannedCode && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: 300, textAlign: 'center' }}>
+                  Please scan the QR code displayed on your laptop screen to connect automatically.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -206,12 +197,12 @@ export default function Phone() {
         {/* State 2: Connected, Movie Selection */}
         {isConnected && !hasStartedWatching && (
           <div className="pairing-section animate-fade-in-up">
-            <div className="success-banner animate-fade-in">
-              <span className="success-icon">✓</span>
-              <span>Laptop paired successfully!</span>
+            <div className="success-banner animate-fade-in" style={{ justifyContent: 'center', backgroundColor: 'var(--bg-card)', border: 'none', padding: '16px 0', color: 'var(--text-primary)', fontSize: '1.1rem', fontWeight: 600 }}>
+              <span className="success-icon" style={{ color: 'var(--success-color)' }}>✓</span>
+              <span>Connected to your laptop</span>
             </div>
 
-            <ConnectionStatus state="connected" />
+            <h2 style={{ fontSize: '1.4rem', marginBottom: 8, color: 'var(--text-primary)' }}>Choose a movie to watch</h2>
 
             <FilePicker
               onFileSelect={handleFileSelect}
@@ -219,13 +210,18 @@ export default function Phone() {
             />
 
             {selectedFile && (
-              <button
-                className="btn btn-primary btn-lg btn-block"
-                onClick={handleStartWatching}
-                id="start-watching-btn"
-              >
-                ▶ Start Watching
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <p style={{ textAlign: 'center', color: 'var(--success-color)', fontWeight: 500 }}>
+                  Ready to watch on laptop
+                </p>
+                <button
+                  className="btn btn-primary btn-lg btn-block"
+                  onClick={handleStartWatching}
+                  id="start-watching-btn"
+                >
+                  ▶ Start Watching
+                </button>
+              </div>
             )}
 
             <button

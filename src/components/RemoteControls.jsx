@@ -36,10 +36,15 @@ export default function RemoteControls({
   };
 
   return (
-    <div className="remote-controls animate-fade-in" id="remote-controls">
+    <div className="remote-controls animate-fade-in" id="remote-controls" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      
+      <div style={{ textAlign: 'center', color: 'var(--primary-color)', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        Playing on your laptop
+      </div>
+
       {/* Now Playing */}
-      <div className="remote-now-playing">
-        <div className="file-name">{fileName || 'No video'}</div>
+      <div className="remote-now-playing" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div className="file-name" style={{ fontSize: '1.2rem', fontWeight: 700 }}>{fileName || 'No video'}</div>
         <div className="remote-time">
           {formatTime(currentTime)} / {formatTime(duration)}
         </div>
