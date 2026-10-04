@@ -1,18 +1,20 @@
+'use client';
+
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 
 export default function DeviceSelector() {
-  const navigate = useNavigate();
+  const router = useRouter();
 
   return (
     <div className="device-cards animate-fade-in-up">
       <div
         className="device-card"
         id="select-phone"
-        onClick={() => navigate('/phone')}
+        onClick={() => router.push('/phone')}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && navigate('/phone')}
+        onKeyDown={(e) => e.key === 'Enter' && router.push('/phone')}
       >
         <div className="device-card-badge">Sender & Remote</div>
         <div className="device-card-content">
@@ -36,10 +38,10 @@ export default function DeviceSelector() {
       <div
         className="device-card"
         id="select-laptop"
-        onClick={() => navigate('/laptop')}
+        onClick={() => router.push('/laptop')}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && navigate('/laptop')}
+        onKeyDown={(e) => e.key === 'Enter' && router.push('/laptop')}
       >
         <div className="device-card-badge device-badge-alt">Display & Audio</div>
         <div className="device-card-content">
@@ -47,7 +49,7 @@ export default function DeviceSelector() {
             <span className="device-card-icon">💻</span>
           </div>
           <h3>Connect Laptop</h3>
-          <p>Pair in seconds via 6-digit code or QR code and enjoy theater-mode playback.</p>
+          <p>Pair in seconds via QR code and enjoy theater-mode playback.</p>
           <ul className="device-card-features">
             <li>✓ Fullscreen cinematic player</li>
             <li>✓ Direct high-bitrate WebRTC stream</li>

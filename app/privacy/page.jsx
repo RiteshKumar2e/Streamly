@@ -1,12 +1,17 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 
-export default function Privacy() {
+export const metadata = {
+  title: 'Privacy Policy — Streamly',
+  description: 'Streamly is 100% Peer-to-Peer. Your movies never touch cloud servers.',
+};
+
+export default function PrivacyPage() {
   return (
     <div className="page" id="privacy-page">
       <div className="legal-container animate-fade-in-up">
         <div className="legal-header">
-          <Link to="/" className="legal-back-link">← Back to Streamly</Link>
+          <Link href="/" className="legal-back-link">← Back to Streamly</Link>
           <span className="section-eyebrow">LEGAL & PRIVACY</span>
           <h1>Privacy Policy</h1>
           <p className="legal-updated">Last Updated: October 4, 2026</p>
@@ -42,10 +47,10 @@ export default function Privacy() {
             </p>
             <ul>
               <li>
-                <strong>Temporary WebRTC Signaling:</strong> A transient 6-digit PIN is generated to establish the initial peer-to-peer handshake between your devices. Once connected, signaling is terminated.
+                <strong>Temporary WebRTC Signaling:</strong> A transient session ID is generated in the QR code to establish the initial peer-to-peer handshake between your devices. Once connected, signaling is terminated.
               </li>
               <li>
-                <strong>Browser LocalStorage:</strong> We store minimal configuration (e.g. cookie consent choice, session PIN) purely inside your browser. This data never leaves your device.
+                <strong>Browser LocalStorage:</strong> We store minimal configuration (e.g. cookie consent choice) purely inside your browser. This data never leaves your device.
               </li>
             </ul>
           </section>
@@ -62,13 +67,10 @@ export default function Privacy() {
           <section className="legal-section">
             <h2>5. Contact Us</h2>
             <p>
-              If you have any questions or feedback regarding this Privacy Policy, please contact our privacy team directly:
-            </p>
-            <p>
-              Email:{' '}
-              <a href="mailto:privacy@streamly.app" className="legal-email-link">
-                privacy@streamly.app
-              </a>
+              If you have any questions regarding privacy, please contact{' '}
+              <a href="mailto:support@streamly.app" className="legal-contact-email">
+                support@streamly.app
+              </a>.
             </p>
           </section>
         </div>

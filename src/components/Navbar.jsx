@@ -1,14 +1,17 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 export default function Navbar({ connectionState }) {
-  const location = useLocation();
+  const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Close mobile menu on page navigation
   useEffect(() => {
     setMobileMenuOpen(false);
-  }, [location.pathname]);
+  }, [pathname]);
 
   const getStatusLabel = () => {
     switch (connectionState) {
@@ -46,7 +49,7 @@ export default function Navbar({ connectionState }) {
   return (
     <header className="navbar" id="navbar">
       <div className="navbar-left">
-        <Link to="/" className="navbar-brand" title="Streamly — Home">
+        <Link href="/" className="navbar-brand" title="Streamly — Home">
           <img src="/streamly.svg" alt="Streamly Logo" className="navbar-logo" width="34" height="34" />
           <span className="navbar-title">Streamly</span>
           <span className="navbar-badge">P2P Direct</span>
@@ -55,16 +58,16 @@ export default function Navbar({ connectionState }) {
         {/* Desktop Navigation Links */}
         <nav className="navbar-nav-links desktop-only" aria-label="Main Navigation">
           <Link
-            to="/phone"
-            className={`navbar-link ${location.pathname === '/phone' ? 'active' : ''}`}
+            href="/phone"
+            className={`navbar-link ${pathname === '/phone' ? 'active' : ''}`}
             id="nav-link-phone"
           >
             <span className="nav-icon" aria-hidden="true">📱</span>
             <span>Connect Phone</span>
           </Link>
           <Link
-            to="/laptop"
-            className={`navbar-link ${location.pathname === '/laptop' ? 'active' : ''}`}
+            href="/laptop"
+            className={`navbar-link ${pathname === '/laptop' ? 'active' : ''}`}
             id="nav-link-laptop"
           >
             <span className="nav-icon" aria-hidden="true">💻</span>
@@ -110,33 +113,33 @@ export default function Navbar({ connectionState }) {
         <div className="mobile-menu-drawer animate-fade-in" id="mobile-menu">
           <nav className="mobile-nav-list" aria-label="Mobile Navigation">
             <Link
-              to="/"
-              className={`mobile-nav-link ${location.pathname === '/' ? 'active' : ''}`}
+              href="/"
+              className={`mobile-nav-link ${pathname === '/' ? 'active' : ''}`}
             >
               <span>🏠 Home</span>
             </Link>
             <Link
-              to="/phone"
-              className={`mobile-nav-link ${location.pathname === '/phone' ? 'active' : ''}`}
+              href="/phone"
+              className={`mobile-nav-link ${pathname === '/phone' ? 'active' : ''}`}
             >
               <span>📱 Connect Phone</span>
             </Link>
             <Link
-              to="/laptop"
-              className={`mobile-nav-link ${location.pathname === '/laptop' ? 'active' : ''}`}
+              href="/laptop"
+              className={`mobile-nav-link ${pathname === '/laptop' ? 'active' : ''}`}
             >
               <span>💻 Connect Laptop</span>
             </Link>
             <div className="mobile-nav-divider" />
             <Link
-              to="/privacy"
-              className={`mobile-nav-link ${location.pathname === '/privacy' ? 'active' : ''}`}
+              href="/privacy"
+              className={`mobile-nav-link ${pathname === '/privacy' ? 'active' : ''}`}
             >
               <span>🔒 Privacy Policy</span>
             </Link>
             <Link
-              to="/terms"
-              className={`mobile-nav-link ${location.pathname === '/terms' ? 'active' : ''}`}
+              href="/terms"
+              className={`mobile-nav-link ${pathname === '/terms' ? 'active' : ''}`}
             >
               <span>📄 Terms & Conditions</span>
             </Link>

@@ -1,16 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import useWebRTC, { CONNECTION_STATES } from '../hooks/useWebRTC.js';
-import useVideoTransfer from '../hooks/useVideoTransfer.js';
-import ConnectionStatus from '../components/ConnectionStatus.jsx';
-import VideoPlayer from '../components/VideoPlayer.jsx';
-import ProgressBar from '../components/ProgressBar.jsx';
-import ErrorMessage from '../components/ErrorMessage.jsx';
-import QRCode from '../components/QRCode.jsx';
+'use client';
 
-export default function Laptop() {
+import React, { useState, useEffect } from 'react';
+import useWebRTC, { CONNECTION_STATES } from '../../src/hooks/useWebRTC.js';
+import useVideoTransfer from '../../src/hooks/useVideoTransfer.js';
+import ConnectionStatus from '../../src/components/ConnectionStatus.jsx';
+import VideoPlayer from '../../src/components/VideoPlayer.jsx';
+import ProgressBar from '../../src/components/ProgressBar.jsx';
+import ErrorMessage from '../../src/components/ErrorMessage.jsx';
+import QRCode from '../../src/components/QRCode.jsx';
+
+export default function LaptopPage() {
   const {
     connectionState,
     sessionId,
+    connectionStatusText,
     setConnectionState,
     error,
     startLaptopSession,
@@ -36,7 +39,8 @@ export default function Laptop() {
 
   const [lastControlMessage, setLastControlMessage] = useState(null);
   const [incomingFileInfo, setIncomingFileInfo] = useState(null);
-  // Start laptop PeerJS session on mount
+
+  // Start laptop WebRTC session on mount
   useEffect(() => {
     startLaptopSession();
   }, [startLaptopSession]);
@@ -174,7 +178,7 @@ export default function Laptop() {
             <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               <div className="waiting-spinner" />
               <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                Waiting for phone...
+                {connectionStatusText || 'Waiting for phone...'}
               </span>
             </div>
           </div>

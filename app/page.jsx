@@ -1,21 +1,12 @@
-/**
- * Streamly — Home (Landing) Page
- *
- * Professional light-mode first landing page with rich hero section,
- * device selection, feature highlights, and interactive how-it-works steps.
- */
+'use client';
 
-import React, { useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import DeviceSelector from '../components/DeviceSelector.jsx';
-import { trackPageView } from '../services/analytics.js';
+import React from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import DeviceSelector from '../src/components/DeviceSelector.jsx';
 
-export default function Home() {
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    trackPageView('/');
-  }, []);
+export default function HomePage() {
+  const router = useRouter();
 
   return (
     <div className="page" id="home-page">
@@ -42,7 +33,7 @@ export default function Home() {
           <div className="hero-buttons">
             <button
               className="btn btn-primary btn-lg"
-              onClick={() => navigate('/phone')}
+              onClick={() => router.push('/phone')}
               id="hero-phone-btn"
             >
               <span className="btn-icon-prefix" aria-hidden="true">📱</span>
@@ -50,7 +41,7 @@ export default function Home() {
             </button>
             <button
               className="btn btn-secondary btn-lg"
-              onClick={() => navigate('/laptop')}
+              onClick={() => router.push('/laptop')}
               id="hero-laptop-btn"
             >
               <span className="btn-icon-prefix" aria-hidden="true">💻</span>
@@ -153,16 +144,16 @@ export default function Home() {
           <div className="steps">
             <div className="step-card">
               <div className="step-badge">Step 1</div>
-              <div className="step-icon-circle" aria-hidden="true">📱</div>
-              <h3>Open on Phone</h3>
-              <p>Visit Streamly on your mobile device and tap Connect Phone to generate your secure PIN.</p>
+              <div className="step-icon-circle" aria-hidden="true">💻</div>
+              <h3>Open Laptop Screen</h3>
+              <p>Open Streamly on your laptop or TV screen. A pairing QR code will appear.</p>
             </div>
 
             <div className="step-card">
               <div className="step-badge">Step 2</div>
-              <div className="step-icon-circle" aria-hidden="true">🔗</div>
-              <h3>Pair Laptop</h3>
-              <p>Scan the QR code with your phone camera or enter the 6-digit pairing code on your laptop.</p>
+              <div className="step-icon-circle" aria-hidden="true">📱</div>
+              <h3>Scan with Phone</h3>
+              <p>Scan the QR code with your phone camera. Devices connect automatically with zero PIN entry.</p>
             </div>
 
             <div className="step-card">
@@ -190,9 +181,9 @@ export default function Home() {
               <span className="footer-desc">— Direct WebRTC Peer-to-Peer Video Streaming</span>
             </div>
             <div className="footer-links">
-              <Link to="/privacy" className="footer-link">Privacy Policy</Link>
+              <Link href="/privacy" className="footer-link">Privacy Policy</Link>
               <span className="footer-dot" aria-hidden="true">•</span>
-              <Link to="/terms" className="footer-link">Terms & Conditions</Link>
+              <Link href="/terms" className="footer-link">Terms & Conditions</Link>
               <span className="footer-dot" aria-hidden="true">•</span>
               <a href="mailto:support@streamly.app" className="footer-link clickable-email">
                 support@streamly.app

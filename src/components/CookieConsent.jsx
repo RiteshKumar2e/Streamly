@@ -1,5 +1,7 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 
 export default function CookieConsent() {
   const [visible, setVisible] = useState(false);
@@ -46,7 +48,7 @@ export default function CookieConsent() {
             <h4>Privacy & Local Storage</h4>
             <p>
               Streamly is 100% peer-to-peer. We do not store your movies or sell your data. We use local storage only to remember pairing sessions and your essential device preferences.{' '}
-              <Link to="/privacy" className="cookie-banner-link">
+              <Link href="/privacy" className="cookie-banner-link">
                 Read Privacy Policy
               </Link>
             </p>

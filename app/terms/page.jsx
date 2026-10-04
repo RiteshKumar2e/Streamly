@@ -1,12 +1,17 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 
-export default function Terms() {
+export const metadata = {
+  title: 'Terms & Conditions — Streamly',
+  description: 'Terms and Conditions of using Streamly peer-to-peer streaming.',
+};
+
+export default function TermsPage() {
   return (
     <div className="page" id="terms-page">
       <div className="legal-container animate-fade-in-up">
         <div className="legal-header">
-          <Link to="/" className="legal-back-link">← Back to Streamly</Link>
+          <Link href="/" className="legal-back-link">← Back to Streamly</Link>
           <span className="section-eyebrow">TERMS OF SERVICE</span>
           <h1>Terms & Conditions</h1>
           <p className="legal-updated">Last Updated: October 4, 2026</p>
@@ -58,15 +63,9 @@ export default function Terms() {
           </section>
 
           <section className="legal-section">
-            <h2>6. Contact & Legal Inquiries</h2>
+            <h2>6. Changes to Terms</h2>
             <p>
-              For legal questions, copyright inquiries, or support, please reach out to:
-            </p>
-            <p>
-              Email:{' '}
-              <a href="mailto:legal@streamly.app" className="legal-email-link">
-                legal@streamly.app
-              </a>
+              We reserve the right to modify these terms at any time. Continued use of Streamly following any updates constitutes acceptance of the modified Terms.
             </p>
           </section>
         </div>

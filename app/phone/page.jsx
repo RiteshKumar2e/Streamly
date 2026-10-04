@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import useWebRTC, { CONNECTION_STATES } from '../hooks/useWebRTC.js';
-import useVideoTransfer from '../hooks/useVideoTransfer.js';
-import FilePicker from '../components/FilePicker.jsx';
-import RemoteControls from '../components/RemoteControls.jsx';
-import ProgressBar from '../components/ProgressBar.jsx';
-import ErrorMessage from '../components/ErrorMessage.jsx';
+'use client';
 
-export default function Phone() {
-  const [searchParams] = useSearchParams();
+import React, { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import useWebRTC, { CONNECTION_STATES } from '../../src/hooks/useWebRTC.js';
+import useVideoTransfer from '../../src/hooks/useVideoTransfer.js';
+import FilePicker from '../../src/components/FilePicker.jsx';
+import RemoteControls from '../../src/components/RemoteControls.jsx';
+import ProgressBar from '../../src/components/ProgressBar.jsx';
+import ErrorMessage from '../../src/components/ErrorMessage.jsx';
+
+function PhoneContent() {
+  const searchParams = useSearchParams();
   const laptopSession = searchParams.get('session') || '';
 
   const {
@@ -40,6 +42,7 @@ export default function Phone() {
   } = useVideoTransfer();
 
   const [hasStartedWatching, setHasStartedWatching] = useState(false);
+
   // Auto-connect to laptop session from QR code
   useEffect(() => {
     if (!laptopSession) return;
@@ -259,5 +262,17 @@ export default function Phone() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function PhonePage() {
+  return (
+    <Suspense fallback={
+      <div className="mode-page" id="phone-page">
+        <div className="waiting-spinner" style={{ margin: '80px auto' }} />
+      </div>
+    }>
+      <PhoneContent />
+    </Suspense>
   );
 }
