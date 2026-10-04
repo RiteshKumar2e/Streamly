@@ -39,12 +39,9 @@ export default function Phone() {
   } = useVideoTransfer();
 
   const [hasStartedWatching, setHasStartedWatching] = useState(false);
-  const pairingStartedRef = useRef(false);
-
   // Auto-connect to laptop session from QR code
   useEffect(() => {
-    if (!laptopSession || pairingStartedRef.current) return;
-    pairingStartedRef.current = true;
+    if (!laptopSession) return;
     joinLaptopSession(laptopSession);
   }, [laptopSession, joinLaptopSession]);
 
