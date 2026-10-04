@@ -208,6 +208,11 @@ export default function Phone() {
         {/* State 2: Connected, Movie Selection */}
         {isConnected && !hasStartedWatching && (
           <div className="pairing-section animate-fade-in-up">
+            <div className="success-banner animate-fade-in">
+              <span className="success-icon">✓</span>
+              <span>Laptop paired successfully!</span>
+            </div>
+
             <ConnectionStatus state="connected" />
 
             <FilePicker

@@ -160,7 +160,7 @@ export default function Laptop() {
         {!isConnected && (
           <div className="pairing-section animate-fade-in-up">
             <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%' }}>
-              <div className="pairing-code-label">Enter Pairing Code</div>
+              <div className="pairing-code-label">Enter 6-Digit Pairing Code</div>
               <input
                 type="text"
                 className="pairing-code-input"
@@ -169,16 +169,22 @@ export default function Laptop() {
                 onChange={handleInputChange}
                 maxLength={7}
                 autoFocus
+                disabled={connectionState === CONNECTION_STATES.CONNECTING}
+                aria-label="6-Digit Pairing Code"
                 id="pairing-code-input"
               />
+
+              {inputCode && inputCode.replace(/\s/g, '').length < 6 && (
+                <span className="input-validation-hint">Enter all 6 digits shown on your phone</span>
+              )}
 
               <button
                 type="submit"
                 className="btn btn-primary btn-lg btn-block"
-                disabled={!validateCode(inputCode)}
+                disabled={!validateCode(inputCode) || connectionState === CONNECTION_STATES.CONNECTING}
                 id="connect-laptop-btn"
               >
-                Connect Phone
+                {connectionState === CONNECTION_STATES.CONNECTING ? 'Connecting...' : 'Connect Phone'}
               </button>
             </form>
 
@@ -200,17 +206,37 @@ export default function Laptop() {
           </div>
         )}
 
-        {/* State 2: Connected, waiting for movie */}
+        {/* State 2: Connected, waiting for movie (Empty State) */}
         {isConnected && !isTransferring && !hasVideo && (
           <div className="waiting-state animate-fade-in">
+            <div className="success-banner animate-fade-in">
+              <span className="success-icon">✓</span>
+              <span>Phone paired successfully!</span>
+            </div>
+
             <ConnectionStatus state="connected" />
             <div className="waiting-icon">🎬</div>
-            <h2>Waiting for movie...</h2>
+            <h2>Ready to Receive Movie</h2>
             <p>
               {incomingFileInfo
                 ? `Preparing to stream ${incomingFileInfo.name}...`
-                : 'Select and stream a video from your phone.'}
+                : 'Select any video file on your phone to start streaming directly to this screen.'}
             </p>
+
+            <div className="empty-state-steps">
+              <div className="empty-step">
+                <span className="empty-step-num">1</span>
+                <span>Open Streamly tab on your phone</span>
+              </div>
+              <div className="empty-step">
+                <span className="empty-step-num">2</span>
+                <span>Tap "Choose your movie"</span>
+              </div>
+              <div className="empty-step">
+                <span className="empty-step-num">3</span>
+                <span>Tap "Start Watching"</span>
+              </div>
+            </div>
           </div>
         )}
 

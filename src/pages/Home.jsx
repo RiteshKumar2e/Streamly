@@ -5,12 +5,17 @@
  * device selection, feature highlights, and interactive how-it-works steps.
  */
 
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import DeviceSelector from '../components/DeviceSelector.jsx';
+import { trackPageView } from '../services/analytics.js';
 
 export default function Home() {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    trackPageView('/');
+  }, []);
 
   return (
     <div className="page" id="home-page">
@@ -40,7 +45,7 @@ export default function Home() {
               onClick={() => navigate('/phone')}
               id="hero-phone-btn"
             >
-              <span className="btn-icon-prefix">📱</span>
+              <span className="btn-icon-prefix" aria-hidden="true">📱</span>
               <span>Connect Phone (Sender)</span>
             </button>
             <button
@@ -48,26 +53,26 @@ export default function Home() {
               onClick={() => navigate('/laptop')}
               id="hero-laptop-btn"
             >
-              <span className="btn-icon-prefix">💻</span>
+              <span className="btn-icon-prefix" aria-hidden="true">💻</span>
               <span>Connect Laptop (Screen)</span>
             </button>
           </div>
 
           <div className="hero-trust-strip">
             <div className="trust-item">
-              <span className="trust-icon">🔒</span>
+              <span className="trust-icon" aria-hidden="true">🔒</span>
               <span>End-to-End Encrypted</span>
             </div>
             <div className="trust-item">
-              <span className="trust-icon">⚡</span>
+              <span className="trust-icon" aria-hidden="true">⚡</span>
               <span>No Cloud Buffering</span>
             </div>
             <div className="trust-item">
-              <span className="trust-icon">📶</span>
+              <span className="trust-icon" aria-hidden="true">📶</span>
               <span>Local Wi-Fi Optimized</span>
             </div>
             <div className="trust-item">
-              <span className="trust-icon">✨</span>
+              <span className="trust-icon" aria-hidden="true">✨</span>
               <span>Original Lossless Quality</span>
             </div>
           </div>
@@ -95,7 +100,7 @@ export default function Home() {
           <div className="features-grid">
             <div className="feature-card">
               <div className="feature-icon-wrapper">
-                <span className="feature-icon">🛡️</span>
+                <span className="feature-icon" aria-hidden="true">🛡️</span>
               </div>
               <h3>100% Private & P2P</h3>
               <p>
@@ -105,7 +110,7 @@ export default function Home() {
 
             <div className="feature-card">
               <div className="feature-icon-wrapper">
-                <span className="feature-icon">⚡</span>
+                <span className="feature-icon" aria-hidden="true">⚡</span>
               </div>
               <h3>Zero Cloud Upload Delay</h3>
               <p>
@@ -115,7 +120,7 @@ export default function Home() {
 
             <div className="feature-card">
               <div className="feature-icon-wrapper">
-                <span className="feature-icon">🎮</span>
+                <span className="feature-icon" aria-hidden="true">🎮</span>
               </div>
               <h3>Phone Remote Control</h3>
               <p>
@@ -125,7 +130,7 @@ export default function Home() {
 
             <div className="feature-card">
               <div className="feature-icon-wrapper">
-                <span className="feature-icon">📺</span>
+                <span className="feature-icon" aria-hidden="true">📺</span>
               </div>
               <h3>Cinematic Theater Mode</h3>
               <p>
@@ -148,28 +153,28 @@ export default function Home() {
           <div className="steps">
             <div className="step-card">
               <div className="step-badge">Step 1</div>
-              <div className="step-icon-circle">📱</div>
+              <div className="step-icon-circle" aria-hidden="true">📱</div>
               <h3>Open on Phone</h3>
               <p>Visit Streamly on your mobile device and tap Connect Phone to generate your secure PIN.</p>
             </div>
 
             <div className="step-card">
               <div className="step-badge">Step 2</div>
-              <div className="step-icon-circle">🔗</div>
+              <div className="step-icon-circle" aria-hidden="true">🔗</div>
               <h3>Pair Laptop</h3>
               <p>Scan the QR code with your phone camera or enter the 6-digit pairing code on your laptop.</p>
             </div>
 
             <div className="step-card">
               <div className="step-badge">Step 3</div>
-              <div className="step-icon-circle">🎬</div>
+              <div className="step-icon-circle" aria-hidden="true">🎬</div>
               <h3>Pick a Movie</h3>
               <p>Select any video file directly from your phone gallery without file size restrictions.</p>
             </div>
 
             <div className="step-card">
               <div className="step-badge">Step 4</div>
-              <div className="step-icon-circle">🍿</div>
+              <div className="step-icon-circle" aria-hidden="true">🍿</div>
               <h3>Watch on Big Screen</h3>
               <p>Stream directly to your laptop's screen while your phone functions as the smart remote.</p>
             </div>
@@ -180,16 +185,18 @@ export default function Home() {
         <footer className="footer">
           <div className="footer-content">
             <div className="footer-brand">
-              <img src="/streamly.svg" alt="Streamly" className="footer-logo" />
+              <img src="/streamly.svg" alt="Streamly Logo" className="footer-logo" width="26" height="26" />
               <span className="footer-title">Streamly</span>
               <span className="footer-desc">— Direct WebRTC Peer-to-Peer Video Streaming</span>
             </div>
-            <div className="footer-meta">
-              <span>Local Wi-Fi / P2P</span>
-              <span className="footer-dot">•</span>
-              <span>100% Private</span>
-              <span className="footer-dot">•</span>
-              <span>No Cloud Uploads</span>
+            <div className="footer-links">
+              <Link to="/privacy" className="footer-link">Privacy Policy</Link>
+              <span className="footer-dot" aria-hidden="true">•</span>
+              <Link to="/terms" className="footer-link">Terms & Conditions</Link>
+              <span className="footer-dot" aria-hidden="true">•</span>
+              <a href="mailto:support@streamly.app" className="footer-link clickable-email">
+                support@streamly.app
+              </a>
             </div>
           </div>
         </footer>
