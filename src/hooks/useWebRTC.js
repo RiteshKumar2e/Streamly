@@ -1,11 +1,16 @@
 /**
- * Streamly — useWebRTC Hook (Next.js Native WebRTC Engine)
+ * Streamly — useWebRTC Hook
  *
- * Direct Device-to-Device WebRTC with serverless HTTP signaling via /api/signal.
- * 100% Hosted on Vercel with zero external WebSocket or third-party dependencies.
+ * Direct device-to-device WebRTC. Signaling (offer/answer/ICE) goes through
+ * src/services/relay.js; the video itself only ever travels over the DataChannel.
+ *
+ * Every phone connection attempt gets its own attemptId. The phone tags its
+ * messages with `from: attemptId` and the laptop tags replies with `to: attemptId`,
+ * so retries / page refreshes never mix up offers and answers from different attempts.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { createSignalChannel } from '../services/relay.js';
 
 const CONNECTION_STATES = {
   IDLE: 'idle',
@@ -19,17 +24,32 @@ const CONNECTION_STATES = {
   ERROR: 'error',
 };
 
-// Fast and reliable globally distributed STUN servers
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-];
+const CONNECT_TIMEOUT_MS = 30000;
+const OFFER_RESEND_MS = [5000, 12000, 20000];
 
-function generateSessionId() {
+const NETWORK_HINT = 'Make sure your phone and laptop are on the same Wi-Fi network (not guest Wi-Fi or mobile data), then tap Retry.';
+
+function getIceServers() {
+  const servers = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ];
+  // Optional TURN relay — needed when the devices are on different networks / strict NATs
+  const turnUrl = process.env.NEXT_PUBLIC_TURN_URL;
+  if (turnUrl) {
+    servers.push({
+      urls: turnUrl.split(',').map((u) => u.trim()).filter(Boolean),
+      username: process.env.NEXT_PUBLIC_TURN_USERNAME || '',
+      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || '',
+    });
+  }
+  return servers;
+}
+
+function randomId(prefix, length) {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
-  let id = 'stream-';
-  for (let i = 0; i < 8; i++) {
+  let id = prefix;
+  for (let i = 0; i < length; i++) {
     id += chars[Math.floor(Math.random() * chars.length)];
   }
   return id;
@@ -50,73 +70,47 @@ export default function useWebRTC(mode) {
 
   const pcRef = useRef(null);
   const channelRef = useRef(null);
-  const pollingTimerRef = useRef(null);
-  const processedMessageIds = useRef(new Set());
+  const signalRef = useRef(null);
+  const attemptRef = useRef(null);
   const pendingCandidates = useRef([]);
+  const timersRef = useRef([]);
   const onControlMessageRef = useRef(null);
   const onTransferChannelReadyRef = useRef(null);
   const isCleanedUpRef = useRef(false);
 
-  // Send signaling message via Next.js API route
-  const sendSignal = useCallback(async (currentSessionId, role, message) => {
-    try {
-      const res = await fetch('/api/signal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSessionId,
-          role,
-          message,
-        }),
-      });
-      return res.ok;
-    } catch (err) {
-      console.error('Failed to send signal:', err);
-      return false;
-    }
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
   }, []);
 
-  // Poll for signaling messages from the other peer
-  const pollSignals = useCallback(async (currentSessionId, role, onMessage) => {
-    if (isCleanedUpRef.current) return;
-
-    try {
-      const res = await fetch(`/api/signal?sessionId=${currentSessionId}&role=${role}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.messages && Array.isArray(data.messages)) {
-          for (const msg of data.messages) {
-            if (msg.id && processedMessageIds.current.has(msg.id)) continue;
-            if (msg.id) processedMessageIds.current.add(msg.id);
-            await onMessage(msg);
-          }
-        }
-      }
-    } catch (err) {
-      // transient network hiccup, polling will retry
-    }
+  const addTimer = useCallback((fn, ms) => {
+    timersRef.current.push(setTimeout(fn, ms));
   }, []);
 
-  const stopPolling = useCallback(() => {
-    if (pollingTimerRef.current) {
-      clearInterval(pollingTimerRef.current);
-      pollingTimerRef.current = null;
+  // Close the peer connection + channel, but keep signaling open
+  const closePeer = useCallback(() => {
+    clearTimers();
+    const channel = channelRef.current;
+    channelRef.current = null;
+    if (channel) {
+      try { channel.close(); } catch {}
     }
-  }, []);
+    const pc = pcRef.current;
+    pcRef.current = null;
+    if (pc) {
+      try { pc.close(); } catch {}
+    }
+    pendingCandidates.current = [];
+  }, [clearTimers]);
 
   const cleanup = useCallback(() => {
-    stopPolling();
-    if (channelRef.current) {
-      try { channelRef.current.close(); } catch {}
-      channelRef.current = null;
+    closePeer();
+    if (signalRef.current) {
+      signalRef.current.close();
+      signalRef.current = null;
     }
-    if (pcRef.current) {
-      try { pcRef.current.close(); } catch {}
-      pcRef.current = null;
-    }
-    processedMessageIds.current.clear();
-    pendingCandidates.current = [];
-  }, [stopPolling]);
+    attemptRef.current = null;
+  }, [closePeer]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -137,15 +131,13 @@ export default function useWebRTC(mode) {
 
   const clearError = useCallback(() => {
     setError(null);
-    if (connectionState === CONNECTION_STATES.ERROR) {
-      setConnectionState(CONNECTION_STATES.IDLE);
-    }
-  }, [connectionState]);
+    setConnectionState((prev) => (prev === CONNECTION_STATES.ERROR ? CONNECTION_STATES.IDLE : prev));
+  }, []);
 
   /**
-   * Configure the established WebRTC DataChannel for control messages and file transfers.
+   * Configure the WebRTC DataChannel used for control messages and file transfer.
    */
-  const setupChannel = useCallback((channel) => {
+  const setupChannel = useCallback((channel, onOpened) => {
     channelRef.current = channel;
     channel.binaryType = 'arraybuffer';
     try {
@@ -153,20 +145,28 @@ export default function useWebRTC(mode) {
     } catch {}
 
     channel.onopen = () => {
-      console.log('WebRTC DataChannel OPENED!');
-      stopPolling();
-      if (!isCleanedUpRef.current) {
-        setConnectionState(CONNECTION_STATES.CONNECTED);
-        setConnectionStatusText('Connected!');
-      }
+      if (channelRef.current !== channel || isCleanedUpRef.current) return;
+      console.log('WebRTC DataChannel open');
+      clearTimers();
+      setError(null);
+      setConnectionState(CONNECTION_STATES.CONNECTED);
+      setConnectionStatusText('Connected!');
+      onOpened?.();
       onTransferChannelReadyRef.current?.(channel);
     };
 
     channel.onclose = () => {
+      // Ignore channels we replaced or closed ourselves
+      if (channelRef.current !== channel || isCleanedUpRef.current) return;
       console.log('WebRTC DataChannel closed');
-      if (!isCleanedUpRef.current) {
+      channelRef.current = null;
+      if (mode === 'laptop') {
+        // Laptop keeps listening, so the phone can simply re-scan / refresh to reconnect
+        setConnectionState(CONNECTION_STATES.PAIRING);
+        setConnectionStatusText('Phone disconnected. Scan the QR code again to reconnect.');
+      } else {
         setConnectionState(CONNECTION_STATES.DISCONNECTED);
-        setConnectionStatusText('Disconnected');
+        setConnectionStatusText('Disconnected from laptop');
       }
     };
 
@@ -176,97 +176,126 @@ export default function useWebRTC(mode) {
 
     channel.onmessage = (event) => {
       const { data } = event;
-      if (typeof data === 'string') {
-        try {
-          const msg = JSON.parse(data);
-          if (msg && msg.type) {
-            if (['play', 'pause', 'seek', 'volume', 'mute', 'state', 'file-info', 'ready', 'error'].includes(msg.type)) {
-              if (msg.type === 'state') {
-                setPlaybackState((prev) => ({
-                  ...prev,
-                  currentTime: msg.currentTime ?? prev.currentTime,
-                  duration: msg.duration ?? prev.duration,
-                  paused: msg.paused ?? prev.paused,
-                  volume: msg.volume ?? prev.volume,
-                  muted: msg.muted ?? prev.muted,
-                }));
-              }
-              onControlMessageRef.current?.(msg);
-            }
+      if (typeof data !== 'string') return;
+      try {
+        const msg = JSON.parse(data);
+        if (msg && ['play', 'pause', 'seek', 'volume', 'mute', 'state', 'file-info', 'ready', 'error'].includes(msg.type)) {
+          if (msg.type === 'state') {
+            setPlaybackState((prev) => ({
+              ...prev,
+              currentTime: msg.currentTime ?? prev.currentTime,
+              duration: msg.duration ?? prev.duration,
+              paused: msg.paused ?? prev.paused,
+              volume: msg.volume ?? prev.volume,
+              muted: msg.muted ?? prev.muted,
+            }));
           }
-        } catch {}
-      }
+          onControlMessageRef.current?.(msg);
+        }
+      } catch {}
     };
-  }, [stopPolling]);
+  }, [mode, clearTimers]);
+
+  const flushCandidates = useCallback(async (pc, attemptId) => {
+    const queued = pendingCandidates.current.filter((c) => c.attemptId === attemptId);
+    pendingCandidates.current = pendingCandidates.current.filter((c) => c.attemptId !== attemptId);
+    for (const { candidate } of queued) {
+      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+    }
+  }, []);
 
   /**
-   * Laptop: Starts waiting for phone by listening for offer on /api/signal.
+   * Laptop: generate a session (shown as QR code) and answer whichever phone offers.
    */
   const startLaptopSession = useCallback(async () => {
     cleanup();
     isCleanedUpRef.current = false;
 
-    try {
-      const id = generateSessionId();
-      setSessionId(id);
-      setConnectionState(CONNECTION_STATES.PAIRING);
-      setConnectionStatusText('Waiting for phone scan...');
-      setError(null);
+    const id = randomId('stream-', 10);
+    setSessionId(id);
+    setConnectionState(CONNECTION_STATES.PAIRING);
+    setConnectionStatusText('Waiting for phone scan...');
+    setError(null);
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    // Last answer per attempt, so a re-sent offer gets the same answer back
+    const answers = new Map();
+
+    const answerOffer = async (msg, signal) => {
+      const attemptId = msg.from;
+
+      // Duplicate offer for the attempt we're already handling: re-send our answer
+      if (attemptRef.current === attemptId && pcRef.current) {
+        const prev = answers.get(attemptId);
+        if (prev) signal.send({ type: 'answer', to: attemptId, sdp: prev });
+        return;
+      }
+
+      // New phone / new attempt: replace any previous connection
+      closePeer();
+      attemptRef.current = attemptId;
+      setConnectionState(CONNECTION_STATES.PAIRING);
+      setConnectionStatusText('Phone found — connecting...');
+
+      const pc = new RTCPeerConnection({ iceServers: getIceServers() });
       pcRef.current = pc;
 
-      // When phone creates data channel, receive it on laptop
       pc.ondatachannel = (e) => {
-        console.log('Laptop received data channel from phone');
+        if (pcRef.current !== pc) return;
         setupChannel(e.channel);
       };
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          sendSignal(id, 'laptop', { type: 'ice', candidate: e.candidate.toJSON() });
+        if (e.candidate && pcRef.current === pc) {
+          signal.send({ type: 'ice', to: attemptId, candidate: e.candidate.toJSON() });
         }
       };
 
-      // Message handler for incoming signals from phone
-      const handlePhoneSignal = async (msg) => {
-        if (msg.type === 'offer') {
-          console.log('Laptop received WebRTC offer from phone');
-          setConnectionStatusText('Connecting to phone...');
-
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
-
-          // Add any queued candidates
-          while (pendingCandidates.current.length > 0) {
-            const cand = pendingCandidates.current.shift();
-            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
-          }
-
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-
-          await sendSignal(id, 'laptop', { type: 'answer', sdp: answer.sdp });
-        } else if (msg.type === 'ice' && msg.candidate) {
-          if (pc.remoteDescription && pc.remoteDescription.type) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
-          } else {
-            pendingCandidates.current.push(msg.candidate);
-          }
+      pc.onconnectionstatechange = () => {
+        if (pcRef.current !== pc || isCleanedUpRef.current) return;
+        console.log('Laptop connection state:', pc.connectionState);
+        if (pc.connectionState === 'failed') {
+          setConnectionState(CONNECTION_STATES.PAIRING);
+          setConnectionStatusText('Could not connect to the phone. Check both devices are on the same Wi-Fi and scan again.');
         }
       };
 
-      // Poll every 500ms
-      pollingTimerRef.current = setInterval(() => {
-        pollSignals(id, 'laptop', handlePhoneSignal);
-      }, 500);
+      try {
+        await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        await flushCandidates(pc, attemptId);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        if (pcRef.current !== pc) return;
+        answers.set(attemptId, answer.sdp);
+        await signal.send({ type: 'answer', to: attemptId, sdp: answer.sdp });
+      } catch (err) {
+        console.error('Laptop failed to answer offer:', err);
+        if (pcRef.current === pc) {
+          setConnectionStatusText('Pairing failed. Scan the QR code again.');
+        }
+      }
+    };
 
-    } catch (err) {
-      handleError('Failed to initialize session: ' + err.message);
-    }
-  }, [cleanup, setupChannel, sendSignal, pollSignals, handleError]);
+    const handlePhoneSignal = (msg) => {
+      if (!msg.from) return;
+      if (msg.type === 'offer' && msg.sdp) {
+        answerOffer(msg, signal);
+      } else if (msg.type === 'ice' && msg.candidate) {
+        const pc = pcRef.current;
+        if (pc && attemptRef.current === msg.from && pc.remoteDescription) {
+          pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
+        } else {
+          // ICE can arrive before its offer — keep it until the offer shows up
+          pendingCandidates.current.push({ attemptId: msg.from, candidate: msg.candidate });
+        }
+      }
+    };
+
+    const signal = createSignalChannel({ sessionId: id, role: 'laptop', onMessage: handlePhoneSignal });
+    signalRef.current = signal;
+  }, [cleanup, closePeer, setupChannel, flushCandidates]);
 
   /**
-   * Phone: Connects to laptop by sending offer through /api/signal.
+   * Phone: connect to the laptop session from the QR code.
    */
   const joinLaptopSession = useCallback(async (laptopSessionId) => {
     if (!laptopSessionId) return;
@@ -274,69 +303,105 @@ export default function useWebRTC(mode) {
     cleanup();
     isCleanedUpRef.current = false;
 
-    try {
-      setConnectionState(CONNECTION_STATES.CONNECTING);
-      setConnectionStatusText('Connecting to laptop...');
-      setError(null);
+    const attemptId = randomId('p-', 10);
+    attemptRef.current = attemptId;
+    const isCurrent = () => attemptRef.current === attemptId && !isCleanedUpRef.current;
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    setConnectionState(CONNECTION_STATES.CONNECTING);
+    setConnectionStatusText('Reaching your laptop...');
+    setError(null);
+
+    let answered = false;
+
+    const handleLaptopSignal = async (msg) => {
+      if (!isCurrent() || msg.to !== attemptId) return;
+      const pc = pcRef.current;
+      if (!pc) return;
+
+      if (msg.type === 'answer' && msg.sdp) {
+        if (pc.signalingState !== 'have-local-offer') return; // duplicate answer
+        try {
+          answered = true;
+          setConnectionStatusText('Laptop found — connecting...');
+          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+          await flushCandidates(pc, attemptId);
+        } catch (err) {
+          console.error('Phone failed to apply answer:', err);
+        }
+      } else if (msg.type === 'ice' && msg.candidate) {
+        if (pc.remoteDescription) {
+          pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
+        } else {
+          pendingCandidates.current.push({ attemptId, candidate: msg.candidate });
+        }
+      }
+    };
+
+    try {
+      const signal = createSignalChannel({ sessionId: laptopSessionId, role: 'phone', onMessage: handleLaptopSignal });
+      signalRef.current = signal;
+
+      // Subscribe before sending the offer, so the laptop's answer can't be missed
+      await signal.ready;
+      if (!isCurrent()) return;
+      signal.setBackupPolling(true);
+
+      const pc = new RTCPeerConnection({ iceServers: getIceServers() });
       pcRef.current = pc;
 
-      // Phone creates the DataChannel
+      // Phone creates the DataChannel; signaling is no longer needed once it opens
       const channel = pc.createDataChannel('streamly', { ordered: true });
-      setupChannel(channel);
+      setupChannel(channel, () => {
+        if (signalRef.current === signal) {
+          signal.close();
+          signalRef.current = null;
+        }
+      });
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          sendSignal(laptopSessionId, 'phone', { type: 'ice', candidate: e.candidate.toJSON() });
+        if (e.candidate && pcRef.current === pc) {
+          signal.send({ type: 'ice', from: attemptId, candidate: e.candidate.toJSON() });
         }
       };
 
-      // Create and send offer
+      pc.onconnectionstatechange = () => {
+        if (pcRef.current !== pc || !isCurrent()) return;
+        console.log('Phone connection state:', pc.connectionState);
+        if (pc.connectionState === 'failed') {
+          handleError('Could not connect directly to your laptop. ' + NETWORK_HINT);
+        }
+      };
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      if (!isCurrent()) return;
 
-      await sendSignal(laptopSessionId, 'phone', { type: 'offer', sdp: offer.sdp });
-      console.log('Phone sent WebRTC offer to laptop');
+      const offerMsg = { type: 'offer', from: attemptId, sdp: offer.sdp };
+      const sent = await signal.send(offerMsg);
+      if (!isCurrent()) return;
+      if (!sent) {
+        handleError('Could not reach the pairing service. Check your internet connection and tap Retry.');
+        return;
+      }
+      console.log('Phone sent offer to laptop');
+      setConnectionStatusText('Waiting for laptop to respond...');
 
-      // Message handler for incoming signals from laptop
-      const handleLaptopSignal = async (msg) => {
-        if (msg.type === 'answer') {
-          console.log('Phone received WebRTC answer from laptop');
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.sdp }));
+      // Re-send the offer if the laptop hasn't answered yet
+      OFFER_RESEND_MS.forEach((ms) => addTimer(() => {
+        if (isCurrent() && !answered) signal.send(offerMsg);
+      }, ms));
 
-          // Add any queued candidates
-          while (pendingCandidates.current.length > 0) {
-            const cand = pendingCandidates.current.shift();
-            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
-          }
-        } else if (msg.type === 'ice' && msg.candidate) {
-          if (pc.remoteDescription && pc.remoteDescription.type) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
-          } else {
-            pendingCandidates.current.push(msg.candidate);
-          }
-        }
-      };
-
-      // Poll every 500ms for laptop answer and ICE candidates
-      pollingTimerRef.current = setInterval(() => {
-        pollSignals(laptopSessionId, 'phone', handleLaptopSignal);
-      }, 500);
-
-      // Safety timeout after 15 seconds
-      setTimeout(() => {
-        if (!channelRef.current || channelRef.current.readyState !== 'open') {
-          if (connectionState === CONNECTION_STATES.CONNECTING) {
-            setConnectionStatusText('Connection taking longer than expected. Tap Retry below.');
-          }
-        }
-      }, 15000);
-
+      addTimer(() => {
+        if (!isCurrent()) return;
+        if (channelRef.current && channelRef.current.readyState === 'open') return;
+        handleError(answered
+          ? 'Found your laptop but could not open a direct connection. ' + NETWORK_HINT
+          : 'Laptop did not respond. Make sure the Streamly page is still open on your laptop (or refresh it for a new QR code), then tap Retry.');
+      }, CONNECT_TIMEOUT_MS);
     } catch (err) {
-      handleError('Failed to connect: ' + err.message);
+      if (isCurrent()) handleError('Failed to connect: ' + err.message);
     }
-  }, [cleanup, setupChannel, sendSignal, pollSignals, handleError, connectionState]);
+  }, [cleanup, setupChannel, flushCandidates, handleError, addTimer]);
 
   /**
    * Send control message over DataChannel.
