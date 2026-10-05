@@ -18,7 +18,7 @@ const PORT = Number(process.env.PORT) || 4000;
 function parseOrigins(raw) {
   const list = (raw || '*')
     .split(',')
-    .map((s) => s.trim())
+    .map((s) => s.trim().replace(/\/+$/, '')) // browsers send Origin without a trailing slash
     .filter(Boolean);
   if (list.length === 0 || list.includes('*')) return '*';
   return list;
