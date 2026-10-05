@@ -1397,3 +1397,9 @@
   color: var(--warning);
   font-size: 13px;
 }
+
+.tile-btn__spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}

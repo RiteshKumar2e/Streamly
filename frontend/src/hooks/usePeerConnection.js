@@ -8,14 +8,17 @@ const KINDS = ['audio', 'video'];
  * - Newcomer (peer.initiator === true) is impolite and makes the initial offer.
  * - The peer that was in the room first is polite and only answers the first offer.
  */
-export default function usePeerConnection({ socket, peer, localStream, mediaReady }) {
+export default function usePeerConnection({ socket, peer, localTracks, sendStream, mediaReady = true }) {
   const [remoteStream, setRemoteStream] = useState(null);
   const [connectionState, setConnectionState] = useState('idle');
   const sessionRef = useRef(null);
   const pendingRef = useRef([]);
   const iceRef = useRef(null);
-  const localStreamRef = useRef(localStream);
-  localStreamRef.current = localStream;
+  // Latest local tracks; the session reads them whenever it (re)attaches senders.
+  const tracksRef = useRef(localTracks);
+  tracksRef.current = localTracks;
+  const sendStreamRef = useRef(sendStream);
+  sendStreamRef.current = sendStream;
 
   // Route incoming signals to the active session (buffer if it isn't created yet).
   useEffect(() => {
@@ -54,7 +57,8 @@ export default function usePeerConnection({ socket, peer, localStream, mediaRead
       socket,
       peerId,
       polite,
-      localStream: localStreamRef.current,
+      getTrack: (kind) => tracksRef.current?.[kind] || null,
+      sendStream: sendStreamRef.current,
       iceServersPromise: iceRef.current,
       onRemoteStream: setRemoteStream,
       onState: setConnectionState,
@@ -75,10 +79,20 @@ export default function usePeerConnection({ socket, peer, localStream, mediaRead
     };
   }, [socket, peerId, polite, mediaReady]);
 
+  // Camera / mic turned on or off: swap the track on the existing sender (no renegotiation).
+  const audioTrack = localTracks?.audio || null;
+  const videoTrack = localTracks?.video || null;
+  useEffect(() => {
+    sessionRef.current?.setLocalTrack('audio', audioTrack);
+  }, [audioTrack]);
+  useEffect(() => {
+    sessionRef.current?.setLocalTrack('video', videoTrack);
+  }, [videoTrack]);
+
   return { remoteStream, connectionState };
 }
 
-function createSession({ socket, peerId, polite, localStream, iceServersPromise, onRemoteStream, onState }) {
+function createSession({ socket, peerId, polite, getTrack, sendStream, iceServersPromise, onRemoteStream, onState }) {
   let pc = null;
   let closed = false;
   let makingOffer = false;
@@ -86,6 +100,7 @@ function createSession({ socket, peerId, polite, localStream, iceServersPromise,
   let isSettingRemoteAnswerPending = false;
   let hadRemoteOffer = false;
   const remote = new MediaStream();
+  const transceivers = {}; // kind -> RTCRtpTransceiver we send on
 
   const send = (data) => {
     if (!closed && socket.connected) socket.emit('signal', { to: peerId, data });
@@ -93,8 +108,6 @@ function createSession({ socket, peerId, polite, localStream, iceServersPromise,
   const publishRemote = () => {
     if (!closed) onRemoteStream(remote.getTracks().length ? new MediaStream(remote.getTracks()) : null);
   };
-  const localTrack = (kind) =>
-    localStream ? (kind === 'audio' ? localStream.getAudioTracks()[0] : localStream.getVideoTracks()[0]) : null;
 
   const start = (async () => {
     const iceServers = await iceServersPromise;
@@ -141,30 +154,30 @@ function createSession({ socket, peerId, polite, localStream, iceServersPromise,
     };
 
     if (!polite) {
-      // Newcomer: declare both kinds up front; send what we have, receive regardless.
+      // Newcomer: declare both kinds up front as sendrecv, so turning the camera or mic on later only
+      // swaps the track (replaceTrack) instead of renegotiating. A sender without a track sends nothing.
       KINDS.forEach((kind) => {
-        const track = localTrack(kind);
-        if (track) pc.addTransceiver(track, { direction: 'sendrecv', streams: [localStream] });
-        else pc.addTransceiver(kind, { direction: 'recvonly' });
+        const track = getTrack(kind);
+        transceivers[kind] = pc.addTransceiver(track || kind, {
+          direction: 'sendrecv',
+          streams: sendStream ? [sendStream] : [],
+        });
       });
     }
   })();
 
   let chain = start.catch((err) => console.warn('[rtc] setup failed', err));
 
-  // Polite side: after the first remote offer, attach our tracks to the offered transceivers.
+  // Polite side: after the first remote offer, answer sendrecv on the offered transceivers.
   const attachLocalToOffer = async () => {
     for (const t of pc.getTransceivers()) {
       const kind = t.receiver?.track?.kind;
-      if (!kind || t.stopped || t.sender.track) continue;
-      const track = localTrack(kind);
-      if (track) {
-        await t.sender.replaceTrack(track);
-        if (typeof t.sender.setStreams === 'function') t.sender.setStreams(localStream);
-        t.direction = 'sendrecv';
-      } else {
-        t.direction = 'recvonly';
-      }
+      if (!kind || t.stopped || transceivers[kind]) continue;
+      transceivers[kind] = t;
+      if (sendStream && typeof t.sender.setStreams === 'function') t.sender.setStreams(sendStream);
+      t.direction = 'sendrecv';
+      const track = getTrack(kind);
+      if (track) await t.sender.replaceTrack(track);
     }
   };
 
@@ -196,6 +209,16 @@ function createSession({ socket, peerId, polite, localStream, iceServersPromise,
 
   return {
     peerId,
+    setLocalTrack(kind, track) {
+      // Queued behind signalling so it runs after the transceivers exist.
+      chain = chain
+        .then(async () => {
+          const t = transceivers[kind];
+          if (closed || !t || t.sender.track === track) return;
+          await t.sender.replaceTrack(track);
+        })
+        .catch((err) => console.warn('[rtc] replaceTrack failed', err));
+    },
     handleSignal(data) {
       chain = chain.then(() => handle(data)).catch((err) => console.warn('[rtc] signal error', err));
     },

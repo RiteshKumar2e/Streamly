@@ -12,8 +12,9 @@ export default function CameraTile({
   stream,
   cam,
   mic,
-  hasCamTrack = true,
-  hasMicTrack = true,
+  mediaSupported = true,
+  camPending = false,
+  micPending = false,
   onToggleCam,
   onToggleMic,
   notice,
@@ -60,7 +61,7 @@ export default function CameraTile({
       .catch(() => {});
   };
 
-  const showVideo = !empty && !!stream && hasLiveVideo && cam !== false && (isSelf ? hasCamTrack : true);
+  const showVideo = !empty && !!stream && hasLiveVideo && cam !== false && (isSelf ? !!cam : true);
   const displayName = isSelf ? `${name || 'You'} (you)` : name || 'Friend';
   const connecting = !isSelf && !empty && connectionState && !['connected', 'idle'].includes(connectionState);
 
@@ -111,21 +112,23 @@ export default function CameraTile({
               type="button"
               className={`tile-btn ${mic ? '' : 'is-off'}`}
               onClick={onToggleMic}
-              disabled={!hasMicTrack}
-              aria-pressed={!mic}
-              title={!hasMicTrack ? 'Microphone unavailable' : mic ? 'Mute microphone' : 'Unmute microphone'}
+              disabled={!mediaSupported || micPending}
+              aria-pressed={!!mic}
+              aria-label={mic ? 'Turn microphone off' : 'Turn microphone on'}
+              title={!mediaSupported ? 'Microphone unavailable' : mic ? 'Turn microphone off' : 'Turn microphone on'}
             >
-              {mic ? <IconMic size={16} /> : <IconMicOff size={16} />}
+              {micPending ? <span className="spinner tile-btn__spinner" /> : mic ? <IconMic size={16} /> : <IconMicOff size={16} />}
             </button>
             <button
               type="button"
               className={`tile-btn ${cam ? '' : 'is-off'}`}
               onClick={onToggleCam}
-              disabled={!hasCamTrack}
-              aria-pressed={!cam}
-              title={!hasCamTrack ? 'Camera unavailable' : cam ? 'Turn camera off' : 'Turn camera on'}
+              disabled={!mediaSupported || camPending}
+              aria-pressed={!!cam}
+              aria-label={cam ? 'Turn camera off' : 'Turn camera on'}
+              title={!mediaSupported ? 'Camera unavailable' : cam ? 'Turn camera off' : 'Turn camera on'}
             >
-              {cam ? <IconCam size={16} /> : <IconCamOff size={16} />}
+              {camPending ? <span className="spinner tile-btn__spinner" /> : cam ? <IconCam size={16} /> : <IconCamOff size={16} />}
             </button>
           </div>
         ) : (

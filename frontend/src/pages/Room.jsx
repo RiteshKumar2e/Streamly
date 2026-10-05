@@ -73,8 +73,8 @@ function RoomSession({ roomId, name }) {
   const rtc = usePeerConnection({
     socket: room.socket,
     peer: room.peer,
-    localStream: media.stream,
-    mediaReady: media.ready,
+    localTracks: media.tracks,
+    sendStream: media.sendStream,
   });
 
   const videoRef = useRef(null);
@@ -210,14 +210,18 @@ function RoomSession({ roomId, name }) {
   const peer = room.peer;
   const mediaNotice =
     media.error === 'denied'
-      ? 'Camera & mic are blocked. You can still watch and chat — allow access in your browser settings and reload to be seen.'
-      : media.error === 'unavailable' || media.error === 'unsupported'
-        ? 'No camera or microphone found. You can still watch and chat.'
-        : media.error === 'no-camera'
-          ? 'No camera available — your friend will only hear you.'
-          : media.error === 'no-mic'
-            ? 'No microphone available — your friend will only see you.'
-            : null;
+      ? 'Your browser blocked the camera or mic. Allow it from the 🔒 icon in the address bar, then try again.'
+      : media.error === 'unsupported'
+        ? 'This browser can’t use a camera or mic here. You can still watch and chat.'
+        : media.error === 'busy'
+          ? 'Your camera or mic is being used by another app. Close it and try again.'
+          : media.error === 'no-camera'
+            ? 'No camera found on this device.'
+            : media.error === 'no-mic'
+              ? 'No microphone found on this device.'
+              : !media.cam && !media.mic
+                ? 'Camera and mic are off. Turn them on when you’re ready.'
+                : null;
 
   return (
     <div className="room">
@@ -260,8 +264,9 @@ function RoomSession({ roomId, name }) {
             stream={media.stream}
             cam={media.cam}
             mic={media.mic}
-            hasCamTrack={media.hasCamTrack}
-            hasMicTrack={media.hasMicTrack}
+            mediaSupported={media.supported}
+            camPending={media.camPending}
+            micPending={media.micPending}
             onToggleCam={media.toggleCam}
             onToggleMic={media.toggleMic}
             notice={mediaNotice}

@@ -35,7 +35,7 @@ export default function NameGate({ roomId, initialName = '', onSubmit }) {
         <button type="submit" className="btn btn-primary btn-lg btn-block room-gate__submit" disabled={!trimmed}>
           Join the watch party
         </button>
-        <p className="room-gate__hint">We’ll ask for camera &amp; microphone access next. You can turn them off anytime.</p>
+        <p className="room-gate__hint">Your camera and mic stay off until you turn them on.</p>
       </form>
     </div>
   );
