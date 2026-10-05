@@ -37,7 +37,7 @@ Deploy the backend first: the frontend needs its URL.
    - `CORS_ORIGIN` can hold several URLs separated by commas, e.g.
      `https://streamly-psi-six.vercel.app,http://localhost:5173`. A trailing `/` is fine.
    - Don't know the Vercel URL yet? Put `*` for now and change it after step 2.
-4. Click **Create Web Service**. When it's live, copy the URL (e.g. `https://streamly-backend.onrender.com`).
+4. Click **Create Web Service**. When it's live, copy the URL (e.g. `https://streamly-tdx8.onrender.com`).
 5. Check it: open `https://<your-backend>.onrender.com/health`. It should show `{"ok":true}`.
 
 > **Free plan note:** the free Render service sleeps after ~15 minutes with no traffic. The first visit
@@ -58,7 +58,7 @@ project settings can stay on their defaults.
 
    | Key                  | Value                                                                              | Environments                     |
    | -------------------- | ---------------------------------------------------------------------------------- | -------------------------------- |
-   | `VITE_BACKEND_URL` | Your Render URL, e.g.`https://streamly-backend.onrender.com` (no trailing `/`) | Production, Preview, Development |
+   | `VITE_BACKEND_URL` | Your Render URL, e.g.`https://streamly-tdx8.onrender.com` (no trailing `/`) | Production, Preview, Development |
    | `VITE_SITE_URL` | Your real site URL, e.g. `https://streamly-psi-six.vercel.app` (used for SEO, sitemap, social previews) | Production |
    | `VITE_CONTACT_EMAIL` | Optional: contact email shown in footer and legal pages | Production |
 3. **Redeploy** (Deployments → ⋯ → Redeploy). Vite bakes `VITE_*` variables in at **build time**,
@@ -102,7 +102,7 @@ TURN_CREDENTIAL=xxxx
 **Vercel (frontend)**
 
 ```
-VITE_BACKEND_URL=https://streamly-backend.onrender.com
+VITE_BACKEND_URL=https://streamly-tdx8.onrender.com
 # your real domain: used for canonical URLs, the sitemap and social previews
 VITE_SITE_URL=https://streamly-psi-six.vercel.app
 # optional: contact email shown in the footer and legal pages

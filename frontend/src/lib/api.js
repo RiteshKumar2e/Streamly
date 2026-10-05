@@ -1,4 +1,6 @@
-export const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000').replace(/\/+$/, '');
+// VITE_BACKEND_URL wins; otherwise production builds use the Render backend and dev uses localhost.
+const DEFAULT_BACKEND = import.meta.env.PROD ? 'https://streamly-tdx8.onrender.com' : 'http://localhost:4000';
+export const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || DEFAULT_BACKEND).replace(/\/+$/, '');
 
 const FALLBACK_ICE = [
   { urls: 'stun:stun.l.google.com:19302' },
