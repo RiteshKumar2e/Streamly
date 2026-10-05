@@ -1,0 +1,22 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.logo:hover {
+  color: var(--text);
+}
+
+.logo img {
+  border-radius: 8px;
+}
+
+.logo-word {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
