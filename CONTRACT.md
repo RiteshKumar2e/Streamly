@@ -34,7 +34,7 @@ Client connects with `io(BACKEND_URL, { transports: ['websocket','polling'] })`.
 | Event | Payload | Ack |
 |-------|---------|-----|
 | `clock:ping` | none | `ack(serverNowMs)` |
-| `room:join` | `{ roomId, name, clientId? }` (clientId: random per-tab id; a stale member with the same clientId is evicted on rejoin) | `ack({ ok:true, selfId, roomId, peers:[{id,name,cam,mic}], state:PlaybackState, messages:ChatMessage[] })` or `ack({ ok:false, error:'ROOM_FULL'|'BAD_REQUEST' })` |
+| `room:join` | `{ roomId, name, clientId? }` (clientId: random per-tab id; a stale member with the same clientId is evicted on rejoin) | `ack({ ok:true, selfId, roomId, peers:[{id,name,cam,mic}], state:PlaybackState, messages:ChatMessage[] })` or `ack({ ok:false, error:'ROOM_FULL'|'BAD_REQUEST'|'RATE_LIMITED' })` |
 | `room:leave` | none | — |
 | `signal` | `{ to, data }` (data = `{ description }` or `{ candidate }`) | — server forwards `signal {from, data}` to `to` only if both in same room |
 | `sync:action` | `SyncAction` (without from/serverTime) | — server updates room state, broadcasts to OTHER members |
@@ -52,6 +52,12 @@ Client connects with `io(BACKEND_URL, { transports: ['websocket','polling'] })`.
 | `sync:action` | `SyncAction` (with `from`, `name`, `serverTime`) |
 | `chat:message` | `ChatMessage` |
 | `peer:media` | `{ id, cam, mic }` |
+| `chat:rejected` | `{ reason: 'RATE_LIMITED' }` — sent to the sender only when a `chat:send` was dropped by the rate limit (5 per 5s). |
+
+Rate limits (server): `POST /api/rooms` 10/min/IP and `GET /api/rooms/:id` 60/min/IP -> HTTP 429 `{ error:'RATE_LIMITED' }` + `Retry-After`;
+max 20 concurrent sockets per IP (connect_error `RATE_LIMITED`); per socket: `room:join` 10/min (ack `{ ok:false, error:'RATE_LIMITED' }`),
+`chat:send` 5/5s (exact duplicate of the previous message within 3s is silently dropped), `sync:action` 20/s, `signal` 200/10s,
+`media:status` 20/10s, `clock:ping` 30/10s (excess dropped silently, no ack). Control characters are stripped from chat text and names.
 
 ### Types
 

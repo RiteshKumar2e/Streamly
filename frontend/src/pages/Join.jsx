@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/ui/Navbar.jsx';
 import Footer from '../components/ui/Footer.jsx';
 import { getRoom, normalizeRoomId } from '../lib/api.js';
+import { usePageMeta } from '../lib/site.js';
 
 const NAME_KEY = 'streamly:name';
 
@@ -21,6 +22,11 @@ export default function Join() {
   const [name, setName] = useState(readName);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+  usePageMeta({
+    title: 'Join a watch party',
+    description: 'Enter the 6-character room code your friend shared to join their Streamly watch party.',
+    path: '/join',
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -96,7 +102,7 @@ export default function Join() {
               {checking ? 'Checking…' : 'Join room'}
             </button>
             <p className="muted" style={{ margin: 0, fontSize: 14, textAlign: 'center' }}>
-              No code? <a href="/#start">Create a new room</a>
+              No code? <Link to="/#start">Create a new room</Link>
             </p>
           </form>
         </div>

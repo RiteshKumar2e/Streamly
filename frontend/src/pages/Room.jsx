@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { normalizeRoomId } from '../lib/api.js';
+import { usePageMeta } from '../lib/site.js';
 import useRoomSocket from '../hooks/useRoomSocket.js';
 import useLocalMedia from '../hooks/useLocalMedia.js';
 import usePeerConnection from '../hooks/usePeerConnection.js';
@@ -39,9 +40,12 @@ export default function Room() {
   const roomId = normalizeRoomId(rawId);
   const [name, setName] = useState(() => readStorage(NAME_KEY).trim());
 
-  useEffect(() => {
-    document.title = roomId ? `Room ${roomId} · Streamly` : 'Streamly';
-  }, [roomId]);
+  usePageMeta({
+    title: roomId ? `Room ${roomId}` : 'Room',
+    description: 'You have been invited to a Streamly watch party. Join to watch together, face to face.',
+    path: '/room',
+    noindex: true,
+  });
 
   if (!roomId) {
     return <RoomFull title="That room link looks broken" message="Check the invite link, or start a new room." />;
@@ -221,7 +225,9 @@ function RoomSession({ roomId, name }) {
 
       {room.status === 'error' && (
         <div className="room-alert alert alert-danger" role="alert">
-          Couldn’t join the room ({room.error}).{' '}
+          {room.error === 'RATE_LIMITED'
+            ? 'Too many attempts in a short time. Wait a minute, then try again.'
+            : `Couldn’t join the room (${room.error}).`}{' '}
           <button type="button" className="room-alert__btn" onClick={room.retry}>
             Try again
           </button>
@@ -292,6 +298,7 @@ function RoomSession({ roomId, name }) {
             messages={room.messages}
             isOwnMessage={room.isOwnMessage}
             onSend={room.sendChat}
+            notice={room.chatNotice}
             disabled={!canControl}
             peerName={peer?.name}
           />

@@ -8,8 +8,28 @@ import {
   publicMember,
   removeMember,
 } from './rooms.js';
+import { TokenBucket, clientIpFromSocket, createConnectionCounter } from './rateLimit.js';
 
 const MAX_NAME = 32;
+
+// ---------- abuse limits ----------
+
+const MAX_CONNECTIONS_PER_IP = 20;
+const CHAT_DUPLICATE_MS = 3000;
+/** Per-socket event limits: [events, windowMs]. */
+const SOCKET_LIMITS = {
+  'room:join': [10, 60_000],
+  'chat:send': [5, 5_000],
+  'sync:action': [20, 1_000],
+  signal: [200, 10_000],
+  'media:status': [20, 10_000],
+  'clock:ping': [30, 10_000],
+};
+
+// C0/C1 control characters plus bidi override/isolate characters (used for text spoofing).
+// Normal unicode, emoji and ZWJ sequences are kept.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const stripControl = (s) => s.replace(CONTROL_CHARS, '');
 const MAX_CHAT = 500;
 const MAX_URL = 2000;
 const MAX_FILE_NAME = 260;
@@ -21,13 +41,13 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function cleanName(raw) {
   if (typeof raw !== 'string') return 'Guest';
-  const name = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME).trim();
+  const name = stripControl(raw).trim().slice(0, MAX_NAME).trim();
   return name || 'Guest';
 }
 
 function cleanString(raw, max) {
   if (typeof raw !== 'string') return '';
-  return raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
+  return stripControl(raw).trim().slice(0, max);
 }
 
 /** Finite, non-negative number or null. */
@@ -122,9 +142,35 @@ const safeAck = (ack) => (typeof ack === 'function' ? ack : () => {});
 // ---------- handlers ----------
 
 export function registerSocketHandlers(io) {
+  const connections = createConnectionCounter(MAX_CONNECTIONS_PER_IP);
+
+  // Cap concurrent sockets per client IP. The slot is released when the socket disconnects.
+  io.use((socket, next) => {
+    const ip = clientIpFromSocket(socket);
+    if (!connections.acquire(ip)) return next(new Error('RATE_LIMITED'));
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      connections.release(ip);
+    };
+    socket.on('disconnect', release);
+    // If the handshake fails after this middleware, the socket never connects: release anyway.
+    socket.conn.once('close', release);
+    next();
+  });
+
   io.on('connection', (socket) => {
     /** Current room id for this socket (one room at a time). */
     socket.data.roomId = null;
+
+    // Per-socket token buckets; garbage-collected together with the socket.
+    const buckets = {};
+    for (const [event, [limit, windowMs]] of Object.entries(SOCKET_LIMITS)) {
+      buckets[event] = new TokenBucket(limit, windowMs);
+    }
+    const allow = (event) => buckets[event].take();
+    let lastChat = { text: '', at: 0 };
 
     const currentRoom = () => (socket.data.roomId ? getRoom(socket.data.roomId) : null);
 
@@ -138,12 +184,14 @@ export function registerSocketHandlers(io) {
     }
 
     socket.on('clock:ping', (...args) => {
+      if (!allow('clock:ping')) return;
       const ack = args.find((a) => typeof a === 'function');
       safeAck(ack)(Date.now());
     });
 
     socket.on('room:join', (payload, ack) => {
       ack = safeAck(typeof payload === 'function' ? payload : ack);
+      if (!allow('room:join')) return ack({ ok: false, error: 'RATE_LIMITED' });
       if (!isObj(payload)) return ack({ ok: false, error: 'BAD_REQUEST' });
       const roomId = normalizeRoomId(payload.roomId);
       if (!roomId) return ack({ ok: false, error: 'BAD_REQUEST' });
@@ -202,6 +250,7 @@ export function registerSocketHandlers(io) {
     socket.on('room:leave', () => leaveCurrentRoom());
 
     socket.on('signal', (payload) => {
+      if (!allow('signal')) return;
       if (!isObj(payload) || typeof payload.to !== 'string' || !isObj(payload.data)) return;
       const room = currentRoom();
       if (!room || payload.to === socket.id) return;
@@ -210,6 +259,7 @@ export function registerSocketHandlers(io) {
     });
 
     socket.on('sync:action', (payload) => {
+      if (!allow('sync:action')) return;
       const room = currentRoom();
       if (!room) return;
       const action = cleanAction(payload);
@@ -235,21 +285,30 @@ export function registerSocketHandlers(io) {
     socket.on('chat:send', (payload) => {
       const room = currentRoom();
       if (!room || !isObj(payload) || typeof payload.text !== 'string') return;
-      const text = payload.text.trim().slice(0, MAX_CHAT);
+      const text = stripControl(payload.text).trim().slice(0, MAX_CHAT);
       if (!text) return;
+      // Silently drop an exact repeat of this socket's previous message sent within 3s.
+      const now = Date.now();
+      if (text === lastChat.text && now - lastChat.at < CHAT_DUPLICATE_MS) return;
+      if (!allow('chat:send')) {
+        socket.emit('chat:rejected', { reason: 'RATE_LIMITED' });
+        return;
+      }
+      lastChat = { text, at: now };
       const member = room.members.get(socket.id);
       const msg = {
         id: crypto.randomUUID(),
         from: socket.id,
         name: member?.name || 'Guest',
         text,
-        ts: Date.now(),
+        ts: now,
       };
       addMessage(room, msg);
       io.to(room.id).emit('chat:message', msg);
     });
 
     socket.on('media:status', (payload) => {
+      if (!allow('media:status')) return;
       const room = currentRoom();
       if (!room || !isObj(payload)) return;
       const member = room.members.get(socket.id);

@@ -390,3 +390,28 @@ a:hover {
 @media (max-width: 480px) {
   .page-card { padding: 24px 20px; }
 }
+
+/* ---------- Text-style button (looks like a link) ---------- */
+.link-button {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.footer-link-btn.link-button {
+  text-decoration: none;
+}
+
+/* ---------- Route loading fallback ---------- */
+.page-loader {
+  min-height: 60vh;
+  display: grid;
+  place-items: center;
+}

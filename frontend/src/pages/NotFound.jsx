@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import Navbar from '../components/ui/Navbar.jsx';
 import Footer from '../components/ui/Footer.jsx';
+import { usePageMeta } from '../lib/site.js';
 
 export default function NotFound() {
+  usePageMeta({ title: 'Page not found', description: 'This page does not exist.', noindex: true });
   return (
     <div className="page">
       <Navbar />

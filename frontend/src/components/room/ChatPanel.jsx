@@ -9,7 +9,7 @@ const timeFmt = (ts) => {
   }
 };
 
-export default function ChatPanel({ messages, isOwnMessage, onSend, disabled, peerName }) {
+export default function ChatPanel({ messages, isOwnMessage, onSend, disabled, peerName, notice }) {
   const [open, setOpen] = useState(true);
   const [text, setText] = useState('');
   const listRef = useRef(null);
@@ -83,6 +83,11 @@ export default function ChatPanel({ messages, isOwnMessage, onSend, disabled, pe
               })
             )}
           </div>
+          {notice && (
+            <p className="chat__notice" role="alert">
+              {notice}
+            </p>
+          )}
           <form className="chat__form" onSubmit={submit}>
             <input
               className="input chat__input"

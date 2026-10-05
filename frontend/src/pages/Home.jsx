@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Navbar from '../components/ui/Navbar.jsx';
 import Footer from '../components/ui/Footer.jsx';
 import { createRoom, normalizeRoomId } from '../lib/api.js';
+import { usePageMeta } from '../lib/site.js';
 import './Home.css';
 
 const NAME_KEY = 'streamly:name';
@@ -90,7 +91,7 @@ const STEPS = [
   },
   {
     title: 'Press play together',
-    body: 'Load a video URL or pick the same local file. Play, pause and seek stay in sync for both of you.',
+    body: 'Paste a YouTube or video link, or pick the same local file. Play, pause and seek stay in sync for both of you.',
   },
 ];
 
@@ -122,8 +123,8 @@ const FEATURES = [
   },
   {
     icon: 'film',
-    title: 'Any video URL or local file',
-    body: 'Paste a direct MP4/WebM link, or both pick the same file from your computer — it never gets uploaded.',
+    title: 'YouTube, links or local files',
+    body: 'Paste a YouTube or direct MP4/WebM link, or both pick the same file from your computer — it never gets uploaded.',
   },
 ];
 
@@ -138,7 +139,7 @@ const FAQ = [
   },
   {
     q: 'Where does the movie come from?',
-    a: 'Either a direct video URL (for example an .mp4 or .webm link) or a local file that both of you have. Local files play straight from your own device and are never uploaded.',
+    a: 'A YouTube link, a direct video URL (for example an .mp4 or .webm link), or a local file that both of you have. Local files play straight from your own device and are never uploaded. Netflix, Prime and other DRM services can’t be embedded.',
   },
   {
     q: 'Is the video call private?',
@@ -161,7 +162,7 @@ function HeroMock() {
         <span className="mock-dot" />
         <span className="mock-dot" />
         <span className="mock-dot" />
-        <span className="mock-url">streamly.app/room/K7Q2MX</span>
+        <span className="mock-url">streamly-psi-six.vercel.app/room/K7Q2MX</span>
       </div>
       <div className="mock-body">
         <div className="mock-cam mock-cam-a">
@@ -208,12 +209,16 @@ export default function Home() {
   const [error, setError] = useState('');
   const [codeError, setCodeError] = useState('');
 
+  const { hash: locationHash } = useLocation();
+  usePageMeta({ path: '/' });
+
+  // Jump to #section on load and when an in-app link changes the hash.
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
+    const hash = locationHash.slice(1);
     if (!hash) return;
     const el = document.getElementById(hash);
-    if (el) requestAnimationFrame(() => el.scrollIntoView());
-  }, []);
+    if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth' }));
+  }, [locationHash]);
 
   async function handleCreate(e) {
     e.preventDefault();

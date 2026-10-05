@@ -1388,3 +1388,12 @@
   .room-status__dot--warning,
   .stage__toast { animation: none; }
 }
+
+.chat__notice {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}

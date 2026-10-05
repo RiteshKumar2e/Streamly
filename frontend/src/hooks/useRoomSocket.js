@@ -33,6 +33,8 @@ export default function useRoomSocket(roomId, name) {
   const [joinInfo, setJoinInfo] = useState(null);
   const [peer, setPeer] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [chatNotice, setChatNotice] = useState(null);
+  const noticeTimer = useRef(null);
   const clockOffsetRef = useRef(0);
   const selfIdsRef = useRef(new Set());
   const socketRef = useRef(null);
@@ -132,7 +134,14 @@ export default function useRoomSocket(roomId, name) {
     s.on('peer:joined', onPeerJoined);
     s.on('peer:left', onPeerLeft);
     s.on('peer:media', onPeerMedia);
+    const onChatRejected = () => {
+      setChatNotice('You’re sending messages too fast. Wait a few seconds.');
+      clearTimeout(noticeTimer.current);
+      noticeTimer.current = setTimeout(() => setChatNotice(null), 4000);
+    };
+
     s.on('chat:message', onChat);
+    s.on('chat:rejected', onChatRejected);
 
     return () => {
       disposed = true;
@@ -148,6 +157,8 @@ export default function useRoomSocket(roomId, name) {
       s.off('peer:left', onPeerLeft);
       s.off('peer:media', onPeerMedia);
       s.off('chat:message', onChat);
+      s.off('chat:rejected', onChatRejected);
+      clearTimeout(noticeTimer.current);
       s.disconnect();
       socketRef.current = null;
       setSocket(null);
@@ -175,5 +186,5 @@ export default function useRoomSocket(roomId, name) {
 
   const isOwnMessage = useCallback((m) => selfIdsRef.current.has(m?.from), []);
 
-  return { socket, status, error, joinInfo, peer, messages, serverNow, sendChat, retry, isOwnMessage };
+  return { socket, status, error, joinInfo, peer, messages, chatNotice, serverNow, sendChat, retry, isOwnMessage };
 }

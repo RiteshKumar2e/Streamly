@@ -7,16 +7,16 @@
   --border-strong: #cfd4e0;
   --text: #0f1729;
   --text-2: #4a5468;
-  --text-3: #8a93a6;
+  --text-3: #646d80;   /* 4.8:1 on --bg (WCAG AA) */
 
   --primary: #4f46e5;
   --primary-hover: #4338ca;
   --primary-soft: #eef0ff;
   --primary-contrast: #ffffff;
   --accent: #0ea5e9;
-  --success: #16a34a;
+  --success: #15803d;
   --success-soft: #e8f7ee;
-  --warning: #d97706;
+  --warning: #b45309;
   --warning-soft: #fdf4e3;
   --danger: #dc2626;
   --danger-soft: #fdecec;
