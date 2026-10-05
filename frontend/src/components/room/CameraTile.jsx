@@ -64,6 +64,16 @@ export default function CameraTile({
   const showVideo = !empty && !!stream && hasLiveVideo && cam !== false && (isSelf ? !!cam : true);
   const displayName = isSelf ? `${name || 'You'} (you)` : name || 'Friend';
   const connecting = !isSelf && !empty && connectionState && !['connected', 'idle'].includes(connectionState);
+  const failed = connecting && connectionState === 'failed';
+
+  // After 15s without a connection, explain instead of spinning forever.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!connecting || failed) return undefined;
+    const t = setTimeout(() => setSlow(true), 15000);
+    return () => clearTimeout(t);
+  }, [connecting, failed]);
 
   return (
     <section className={`cam-tile card ${isSelf ? 'cam-tile--self' : 'cam-tile--remote'}`} aria-label={displayName}>
@@ -89,10 +99,19 @@ export default function CameraTile({
             <IconMicOff size={14} />
           </span>
         )}
-        {connecting && (
+        {connecting && !failed && !slow && (
           <span className="cam-tile__chip cam-tile__chip--status">
             <span className="spinner cam-tile__spinner" /> Connecting video…
           </span>
+        )}
+        {(failed || slow) && (
+          <div className="cam-tile__fail" role="status">
+            <strong>{failed ? 'Video call couldn’t connect' : 'Still connecting the video call…'}</strong>
+            <span>
+              Your networks block a direct connection. The movie and chat still work. Trying the same Wi‑Fi usually
+              helps.
+            </span>
+          </div>
         )}
         {needsGesture && (
           <button type="button" className="cam-tile__gesture" onClick={enableAudio}>

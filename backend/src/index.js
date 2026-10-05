@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { createRoom, roomInfo } from './rooms.js';
 import { registerSocketHandlers } from './socket.js';
 import { rateLimitMiddleware } from './rateLimit.js';
+import { getIceServers, turnConfigured } from './ice.js';
 
 // Load backend/.env when present (Node 20.12+/21.7+). Hosts like Render set env vars directly.
 try {
@@ -28,22 +29,6 @@ function parseOrigins(raw) {
 const origin = parseOrigins(process.env.CORS_ORIGIN);
 const corsOptions = { origin, methods: ['GET', 'POST', 'OPTIONS'] };
 
-function iceServers() {
-  const servers = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  ];
-  const turnUrls = (process.env.TURN_URL || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (turnUrls.length) {
-    const turn = { urls: turnUrls };
-    if (process.env.TURN_USERNAME) turn.username = process.env.TURN_USERNAME;
-    if (process.env.TURN_CREDENTIAL) turn.credential = process.env.TURN_CREDENTIAL;
-    servers.push(turn);
-  }
-  return servers;
-}
 
 const app = express();
 app.disable('x-powered-by');
@@ -71,7 +56,10 @@ app.use(express.json({ limit: '10kb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-app.get('/api/ice', (_req, res) => res.json({ iceServers: iceServers() }));
+app.get('/api/ice', async (_req, res) => {
+  res.set('Cache-Control', 'no-store'); // contains short-lived TURN credentials
+  res.json({ iceServers: await getIceServers() });
+});
 
 const createRoomLimit = rateLimitMiddleware({ limit: 10, windowMs: 60_000 });
 const roomInfoLimit = rateLimitMiddleware({ limit: 60, windowMs: 60_000 });
@@ -103,6 +91,7 @@ registerSocketHandlers(io);
 server.listen(PORT, () => {
   console.log(`Streamly backend listening on http://localhost:${PORT}`);
   console.log(`CORS origin: ${Array.isArray(origin) ? origin.join(', ') : origin}`);
+  if (!turnConfigured()) console.warn('No TURN server configured: video calls may not connect across different networks. See DEPLOY.md.');
 });
 
 function shutdown() {

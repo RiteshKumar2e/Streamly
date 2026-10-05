@@ -21,7 +21,13 @@ services:
         value: production
       - key: CORS_ORIGIN
         value: https://streamly-psi-six.vercel.app
-      # Optional TURN relay (cameras on strict networks). Render asks for these when you apply the Blueprint.
+      # TURN relay so video calls connect across networks (mobile data, strict Wi-Fi).
+      # Recommended: Cloudflare Realtime TURN (free tier). Render asks for these when you apply the Blueprint.
+      - key: CF_TURN_KEY_ID
+        sync: false
+      - key: CF_TURN_API_TOKEN
+        sync: false
+      # Or any static TURN provider (e.g. metered.ca):
       - key: TURN_URL
         sync: false
       - key: TURN_USERNAME
