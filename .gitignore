@@ -26,6 +26,8 @@ dist-ssr
 *.sw?
 
 # Environment variables
+frontend/.env
+backend/.env
 .env
 .env.local
 .env.development.local
