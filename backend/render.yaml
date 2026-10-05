@@ -1,5 +1,5 @@
 # Render Blueprint for the Streamly backend (Node + Socket.IO).
-# Render dashboard → New + → Blueprint → pick this repo. Render reads this file and creates the service.
+# Render → New + → Blueprint → pick this repo → Blueprint Path: backend/render.yaml
 services:
   - type: web
     name: streamly-backend
@@ -7,9 +7,11 @@ services:
     plan: free
     region: singapore          # closest Render region to India
     branch: main
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: npm start
+    rootDir: backend           # paths are relative to the repo root
+    # The script installs deps even if the build image has no `npm` on PATH ("npm: command not found").
+    buildCommand: bash scripts/render-build.sh
+    # Start with node directly: no npm needed at runtime.
+    startCommand: node src/index.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -19,7 +21,7 @@ services:
         value: production
       - key: CORS_ORIGIN
         value: https://streamly-psi-six.vercel.app
-      # Optional TURN relay (cameras on strict networks). Render asks for these values when you create the Blueprint.
+      # Optional TURN relay (cameras on strict networks). Render asks for these when you apply the Blueprint.
       - key: TURN_URL
         sync: false
       - key: TURN_USERNAME
